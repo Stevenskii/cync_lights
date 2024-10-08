@@ -487,8 +487,14 @@ class CyncRoom:
             self.color_temp_kelvin = _color_temp
             self.rgb = _rgb
             self.publish_update()
-            if self._update_parent_room:
-                self._update_parent_room()
+            if self._update_callback:
+				self._hass.add_job(self._update_callback)
+			if self._update_parent_room:
+				self._hass.add_job(self._update_parent_room)
+
+    def publish_update(self):
+        if self._update_callback:
+            self._hass.add_job(self._update_callback)
 
     def update_controllers(self):
         """Update the list of responsive, Wi-Fi connected controller devices"""
@@ -537,13 +543,15 @@ class CyncSwitch:
         self._command_timeout = 0.5
         self._command_retry_time = 5
 
-    def register(self, update_callback) -> None:
-        """Register callback, called when switch changes state."""
-        self._update_callback = update_callback
+    def register(self, update_callback, hass) -> None:
+		"""Register callback, called when switch changes state."""
+		self._update_callback = update_callback
+		self._hass = hass
 
     def reset(self) -> None:
         """Remove previously registered callback."""
         self._update_callback = None
+        self._hass = None
 
     def register_room_updater(self, parent_updater):
         self._update_parent_room = parent_updater
@@ -645,8 +653,10 @@ class CyncSwitch:
             self.color_temp_kelvin = _color_temp
             self.rgb = rgb
             self.publish_update()
-            if self._update_parent_room:
-                self._update_parent_room()
+            if self._update_callback:
+				self._hass.add_job(self._update_callback)
+			if self._update_parent_room:
+				self._hass.add_job(self._update_parent_room)
 
     def update_controllers(self):
         """Update the list of responsive, Wi-Fi connected controller devices"""
@@ -668,8 +678,8 @@ class CyncSwitch:
             self.controllers = [self.default_controller]
 
     def publish_update(self):
-        if self._update_callback:
-            self._update_callback()
+		if self._update_callback:
+			self._hass.add_job(self._update_callback)
 
 class CyncMotionSensor:
 
@@ -685,6 +695,7 @@ class CyncMotionSensor:
     def register(self, update_callback) -> None:
         """Register callback, called when switch changes state."""
         self._update_callback = update_callback
+		self._hass = hass
 
     def reset(self) -> None:
         """Remove previously registered callback."""
@@ -695,8 +706,8 @@ class CyncMotionSensor:
         self.publish_update()
 
     def publish_update(self):
-        if self._update_callback:
-            self._update_callback()
+		if self._update_callback:
+			self._hass.add_job(self._update_callback)
 
 class CyncAmbientLightSensor:
 
@@ -712,6 +723,7 @@ class CyncAmbientLightSensor:
     def register(self, update_callback) -> None:
         """Register callback, called when switch changes state."""
         self._update_callback = update_callback
+		self._hass = hass
 
     def reset(self) -> None:
         """Remove previously registered callback."""
@@ -723,7 +735,7 @@ class CyncAmbientLightSensor:
 
     def publish_update(self):
         if self._update_callback:
-            self._update_callback()
+			self._hass.add_job(self._update_callback)
 
 class CyncUserData:
     """Class to handle user authentication and data retrieval."""
