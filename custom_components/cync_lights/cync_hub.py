@@ -617,28 +617,34 @@ class CyncSwitch:
         if self.hub.pending_commands.get(seq) is not None:
             self.hub.pending_commands.pop(seq)
 
-    def update_switch(self,state,brightness,color_temp,rgb):
-        """Update the state of the switch as updates are received from the Cync server"""
-        self.update_received = True
-        # Cync sends the color temp as a percentage from 0-100 based on the max and min
-        # color temp. Most Cync bulbs support 2000K-7000K, so we have to calculate what
-        # is actually being requested.
+    def update_switch(self, state, brightness, color_temp=None, rgb=None):
+    """Update the state of the switch as updates are received from the Cync server."""
+    self.update_received = True
+
+    if color_temp is not None:
+        # Calculate _color_temp from color_temp percentage
         _color_temp = round(
             (self.max_color_temp_kelvin - self.min_color_temp_kelvin) *
             (color_temp / 100) +
             self.min_color_temp_kelvin
         )
-        if self.power_state != state or self.brightness != brightness or self.color_temp_kelvin != _color_temp or self.rgb != rgb:
-            self.power_state = state
-            self.brightness = brightness if self.support_brightness and state else 100 if state else 0
-            # Cync sends the color temp as a percentage from 0-100 based on the max and
-            # min color temp. Most Cync bulbs support 2000K-7000K, so we have to
-            # calculate what is actually being requested.
-            self.color_temp_kelvin = _color_temp
-            self.rgb = rgb
-            self.publish_update()
-            if self._update_parent_room:
-                self._update_parent_room()
+    else:
+        _color_temp = self.color_temp_kelvin
+
+    if rgb is None:
+        rgb = self.rgb
+
+    if (self.power_state != state or
+        self.brightness != brightness or
+        self.color_temp_kelvin != _color_temp or
+        self.rgb != rgb):
+        self.power_state = state
+        self.brightness = brightness if self.support_brightness and state else 100 if state else 0
+        self.color_temp_kelvin = _color_temp
+        self.rgb = rgb
+        self.publish_update()
+        if self._update_parent_room:
+            self._update_parent_room()
 
     def update_controllers(self):
         """Update the list of responsive, Wi-Fi connected controller devices"""
