@@ -1,16 +1,11 @@
-"""Module for managing the Cync Hub and associated devices."""
-
-from __future__ import annotations
-
-import asyncio
 import logging
+import threading
+import asyncio
+import struct
+import aiohttp
 import math
 import ssl
-import struct
-import threading
-from typing import Any, Callable, Dict, List, Optional
-
-import aiohttp
+from typing import Any
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -21,210 +16,110 @@ API_DEVICES = "https://api.gelighting.com/v2/user/{user}/subscribe/devices"
 API_DEVICE_INFO = "https://api.gelighting.com/v2/product/{product_id}/device/{device_id}/property"
 
 Capabilities = {
-    "ONOFF": [
-        1, 5, 6, 7, 8, 9, 10, 11, 13, 14, 15, 17, 18, 19, 20, 21, 22, 23, 24, 25,
-        26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 48, 49, 51,
-        52, 53, 54, 55, 56, 57, 58, 59, 61, 62, 63, 64, 65, 66, 67, 68, 80, 81,
-        82, 83, 85, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139,
-        140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150, 151, 152, 153,
-        154, 155, 156, 158, 159, 160, 161, 162, 163, 164, 165, 169, 170,
-    ],
-    "BRIGHTNESS": [
-        1, 5, 6, 7, 8, 9, 10, 11, 13, 14, 15, 17, 18, 19, 20, 21, 22, 23, 24,
-        25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 48, 49, 55, 56, 80,
-        81, 82, 83, 85, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138,
-        139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150, 151, 152,
-        153, 154, 155, 156, 158, 159, 160, 161, 162, 163, 164, 165, 169, 170,
-    ],
-    "COLORTEMP": [
-        5, 6, 7, 8, 10, 11, 14, 15, 19, 20, 21, 22, 23, 25, 26, 28, 29, 30, 31,
-        32, 33, 34, 35, 80, 82, 83, 85, 129, 130, 131, 132, 133, 135, 136, 137,
-        138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 153, 154, 155, 156,
-        158, 159, 160, 161, 162, 163, 164, 165, 169, 170,
-    ],
-    "RGB": [
-        6, 7, 8, 21, 22, 23, 30, 31, 32, 33, 34, 35, 131, 132, 133, 137, 138,
-        139, 140, 141, 142, 143, 146, 147, 153, 154, 155, 156, 158, 159, 160,
-        161, 162, 163, 164, 165, 169, 170,
-    ],
-    "MOTION": [37, 49, 54],
-    "AMBIENT_LIGHT": [37, 49, 54],
-    "WIFICONTROL": [
-        36, 37, 38, 39, 40, 48, 49, 51, 52, 53, 54, 55, 56, 57, 58, 59, 61, 62,
-        63, 64, 65, 66, 67, 68, 80, 81, 128, 129, 130, 131, 132, 133, 134, 135,
-        136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149,
-        150, 151, 152, 153, 154, 155, 156, 158, 159, 160, 161, 162, 163, 164,
-        165, 169, 170,
-    ],
-    "PLUG": [64, 65, 66, 67, 68],
-    "FAN": [81],
-    "MULTIELEMENT": {'67': 2},
+    "ONOFF":[1,5,6,7,8,9,10,11,13,14,15,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,48,49,51,52,53,54,55,56,57,58,59,61,62,63,64,65,66,67,68,80,81,82,83,85,128,129,130,131,132,133,134,135,136,137,138,139,140,141,142,143,144,145,146,147,148,149,150,151,152,153,154,156,158,159,160,161,162,163,164,165],
+    "BRIGHTNESS":[1,5,6,7,8,9,10,11,13,14,15,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,48,49,55,56,80,81,82,83,85,128,129,130,131,132,133,134,135,136,137,138,139,140,141,142,143,144,145,146,147,148,149,150,151,152,153,154,156,158,159,160,161,162,163,164,165],
+    "COLORTEMP":[5,6,7,8,10,11,14,15,19,20,21,22,23,25,26,28,29,30,31,32,33,34,35,80,82,83,85,129,130,131,132,133,135,136,137,138,139,140,141,142,143,144,145,146,147,153,154,156,158,159,160,161,162,163,164,165],
+    "RGB":[6,7,8,21,22,23,30,31,32,33,34,35,131,132,133,137,138,139,140,141,142,143,146,147,153,154,156,158,159,160,161,162,163,164,165],
+    "MOTION":[37,49,54],
+    "AMBIENT_LIGHT":[37,49,54],
+    "WIFICONTROL":[36,37,38,39,40,48,49,51,52,53,54,55,56,57,58,59,61,62,63,64,65,66,67,68,80,81,128,129,130,131,132,133,134,135,136,137,138,139,140,141,142,143,144,145,146,147,148,149,150,151,152,153,154,156,158,159,160,161,162,163,164,165],
+    "PLUG":[64,65,66,67,68],
+    "FAN":[81],
+    "MULTIELEMENT":{'67':2}
 }
 
-
-class LostConnection(Exception):
-    """Exception for lost connection to Cync Server."""
-
-
-class ShuttingDown(Exception):
-    """Exception when Cync client is shutting down."""
-
-
-class InvalidCyncConfiguration(Exception):
-    """Exception for invalid Cync configuration."""
-
-
 class CyncHub:
-    """Class representing the Cync Hub."""
 
-    def __init__(self, user_data: dict, options: dict) -> None:
-        """Initialize the Cync Hub."""
-        self.thread: Optional[threading.Thread] = None
-        self.loop: Optional[asyncio.AbstractEventLoop] = None
-        self.reader: Optional[asyncio.StreamReader] = None
-        self.writer: Optional[asyncio.StreamWriter] = None
+    def __init__(self, user_data, options, remove_options_update_listener):
+
+        self.thread = None
+        self.loop = None
+        self.reader = None
+        self.writer = None
         self.login_code = bytearray(user_data['cync_credentials'])
         self.logged_in = False
         self.home_devices = user_data['cync_config']['home_devices']
         self.home_controllers = user_data['cync_config']['home_controllers']
         self.switchID_to_homeID = user_data['cync_config']['switchID_to_homeID']
-        self.connected_devices = {home_id: [] for home_id in self.home_controllers.keys()}
+        self.connected_devices = {home_id:[] for home_id in self.home_controllers.keys()}
         self.shutting_down = False
-        self.cync_rooms: Dict[str, CyncRoom] = {}
-        self.cync_switches: Dict[str, CyncSwitch] = {}
-        self.cync_motion_sensors: Dict[str, CyncMotionSensor] = {}
-        self.cync_ambient_light_sensors: Dict[str, CyncAmbientLightSensor] = {}
-        self.switchID_to_deviceIDs: Dict[str, List[str]] = {}
+        self.remove_options_update_listener = remove_options_update_listener
+        self.cync_rooms = {room_id:CyncRoom(room_id,room_info,self) for room_id,room_info in user_data['cync_config']['rooms'].items()}
+        self.cync_switches = {device_id:CyncSwitch(device_id,switch_info,self.cync_rooms.get(switch_info['room'], None),self) for device_id,switch_info in user_data['cync_config']['devices'].items() if switch_info.get("ONOFF",False)}
+        self.cync_motion_sensors = {device_id:CyncMotionSensor(device_id,device_info,self.cync_rooms.get(device_info['room'], None)) for device_id,device_info in user_data['cync_config']['devices'].items() if device_info.get("MOTION",False)}
+        self.cync_ambient_light_sensors = {device_id:CyncAmbientLightSensor(device_id,device_info,self.cync_rooms.get(device_info['room'], None)) for device_id,device_info in user_data['cync_config']['devices'].items() if device_info.get("AMBIENT_LIGHT",False)}
+        self.switchID_to_deviceIDs = {device_info.switch_id:[dev_id for dev_id, dev_info in self.cync_switches.items() if dev_info.switch_id == device_info.switch_id] for device_id, device_info in self.cync_switches.items() if int(device_info.switch_id) > 0}
         self.connected_devices_updated = False
         self.options = options
         self._seq_num = 0
-        self.pending_commands: Dict[str, Callable[[str], None]] = {}
-
-        # Initialize devices
-        self._initialize_devices(user_data)
-
-    def _initialize_devices(self, user_data: dict) -> None:
-        """Initialize devices and rooms."""
-        rooms_data = user_data['cync_config']['rooms']
-        devices_data = user_data['cync_config']['devices']
-
-        for room_id, room_info in rooms_data.items():
-            self.cync_rooms[room_id] = CyncRoom(room_id, room_info, self)
-
-        for device_id, device_info in devices_data.items():
-            if device_info.get("ONOFF", False):
-                room = self.cync_rooms.get(device_info['room'], None)
-                self.cync_switches[device_id] = CyncSwitch(device_id, device_info, room, self)
-
-            if device_info.get("MOTION", False):
-                room = self.cync_rooms.get(device_info['room'], None)
-                self.cync_motion_sensors[device_id] = CyncMotionSensor(device_id, device_info, room)
-
-            if device_info.get("AMBIENT_LIGHT", False):
-                room = self.cync_rooms.get(device_info['room'], None)
-                self.cync_ambient_light_sensors[device_id] = CyncAmbientLightSensor(device_id, device_info, room)
-
-        self.switchID_to_deviceIDs = {
-            switch.switch_id: [
-                dev_id
-                for dev_id, dev in self.cync_switches.items()
-                if dev.switch_id == switch.switch_id
-            ]
-            for dev_id, switch in self.cync_switches.items()
-            if int(switch.switch_id) > 0
-        }
-
-        for room in self.cync_rooms.values():
-            if room.is_subgroup:
-                room.initialize()
-
-        for room in self.cync_rooms.values():
-            if not room.is_subgroup:
-                room.initialize()
-
-    def start_tcp_client(self) -> None:
-        """Start the TCP client in a new thread."""
-        self.thread = threading.Thread(target=self._start_tcp_client, daemon=True)
+        self.pending_commands = {}
+        [room.initialize() for room in self.cync_rooms.values() if room.is_subgroup]
+        [room.initialize() for room in self.cync_rooms.values() if not room.is_subgroup]
+        
+    def start_tcp_client(self):
+        self.thread = threading.Thread(target=self._start_tcp_client,daemon=True)
         self.thread.start()
 
-    def _start_tcp_client(self) -> None:
-        """Initialize the event loop and start the TCP client."""
+    def _start_tcp_client(self):
         self.loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self.loop)
         self.loop.run_until_complete(self._connect())
 
-    def disconnect(self) -> None:
-        """Disconnect from the hub."""
+    def disconnect(self):
         self.shutting_down = True
-        if self.loop and self.writer:
-            for home_controllers in self.home_controllers.values():
-                for controller in home_controllers:
-                    seq = self.get_seq_num()
-                    state_request = (
-                        bytes.fromhex('7300000018')
-                        + int(controller).to_bytes(4, 'big')
-                        + seq.to_bytes(2, 'big')
-                        + bytes.fromhex('007e00000000f85206000000ffff0000567e')
-                    )
-                    self.loop.call_soon_threadsafe(self.send_request, state_request)
+        for home_controllers in self.home_controllers.values(): #send packets to server to generate data to be read which will initiate shutdown
+            for controller in home_controllers:
+                seq = self.get_seq_num()
+                state_request = bytes.fromhex('7300000018') + int(controller).to_bytes(4,'big') + seq.to_bytes(2,'big') + bytes.fromhex('007e00000000f85206000000ffff0000567e')
+                self.loop.call_soon_threadsafe(self.send_request,state_request)
 
-    async def _connect(self) -> None:
-        """Establish connection to the Cync server."""
+    async def _connect(self):
         while not self.shutting_down:
             try:
                 context = ssl.create_default_context()
                 try:
-                    self.reader, self.writer = await asyncio.open_connection(
-                        'cm.gelighting.com', 23779, ssl=context
-                    )
-                except Exception:
+                    self.reader, self.writer = await asyncio.open_connection('cm.gelighting.com', 23779, ssl = context)
+                except Exception as e:
                     context.check_hostname = False
                     context.verify_mode = ssl.CERT_NONE
                     try:
-                        self.reader, self.writer = await asyncio.open_connection(
-                            'cm.gelighting.com', 23779, ssl=context
-                        )
-                    except Exception:
-                        self.reader, self.writer = await asyncio.open_connection(
-                            'cm.gelighting.com', 23778
-                        )
+                        self.reader, self.writer = await asyncio.open_connection('cm.gelighting.com', 23779, ssl = context)
+                    except Exception as e:
+                        self.reader, self.writer = await asyncio.open_connection('cm.gelighting.com', 23778)
             except Exception as e:
-                _LOGGER.error("Connection error: %s", e)
+                _LOGGER.error(str(type(e).__name__) + ": " + str(e))
                 await asyncio.sleep(5)
             else:
-                read_tcp_messages = asyncio.create_task(self._read_tcp_messages(), name="Read TCP Messages")
-                maintain_connection = asyncio.create_task(self._maintain_connection(), name="Maintain Connection")
-                update_state = asyncio.create_task(self._update_state(), name="Update State")
-                update_connected_devices = asyncio.create_task(self._update_connected_devices(), name="Update Connected Devices")
+                read_tcp_messages = asyncio.create_task(self._read_tcp_messages(), name = "Read TCP Messages")
+                maintain_connection = asyncio.create_task(self._maintain_connection(), name = "Maintain Connection")
+                update_state = asyncio.create_task(self._update_state(), name = "Update State")
+                update_connected_devices = asyncio.create_task(self._update_connected_devices(), name = "Update Connected Devices")
                 read_write_tasks = [read_tcp_messages, maintain_connection, update_state, update_connected_devices]
                 try:
-                    done, pending = await asyncio.wait(read_write_tasks, return_when=asyncio.FIRST_EXCEPTION)
+                    done, pending = await asyncio.wait(read_write_tasks,return_when=asyncio.FIRST_EXCEPTION)
                     for task in done:
                         name = task.get_name()
                         exception = task.exception()
-                        if exception:
-                            _LOGGER.error("Task %s raised exception: %s", name, exception)
+                        try:
+                            result = task.result()
+                        except Exception as e:
+                            _LOGGER.error(str(type(e).__name__) + ": " + str(e))
                     for task in pending:
-                        task.cancel()
+                        task.cancel()                    
                     if not self.shutting_down:
                         _LOGGER.error("Connection to Cync server reset, restarting in 15 seconds")
                         await asyncio.sleep(15)
                     else:
                         _LOGGER.debug("Cync client shutting down")
                 except Exception as e:
-                    _LOGGER.error("Exception in _connect: %s", e)
+                    _LOGGER.error(str(type(e).__name__) + ": " + str(e))
 
-    async def _read_tcp_messages(self) -> None:
-        """Read messages from the TCP connection."""
-        if self.writer:
-            self.writer.write(self.login_code)
-            await self.writer.drain()
-        if self.reader:
-            await self.reader.read(1000)
+    async def _read_tcp_messages(self):
+        self.writer.write(self.login_code)
+        await self.writer.drain()
+        await self.reader.read(1000)
         self.logged_in = True
         while not self.shutting_down:
-            if not self.reader:
-                break
             data = await self.reader.read(1000)
             if len(data) == 0:
                 self.logged_in = False
@@ -232,42 +127,131 @@ class CyncHub:
             while len(data) >= 12:
                 packet_type = int(data[0])
                 packet_length = struct.unpack(">I", data[1:5])[0]
-                packet = data[5:packet_length + 5]
+                packet = data[5:packet_length+5]
                 try:
                     if packet_length == len(packet):
-                        self._process_packet(packet_type, packet, packet_length)
+                        if packet_type == 115:
+                            switch_id = str(struct.unpack(">I", packet[0:4])[0])
+                            home_id = self.switchID_to_homeID[switch_id]
+
+                            #send response packet
+                            response_id = struct.unpack(">H", packet[4:6])[0]
+                            response_packet = bytes.fromhex('7300000007') + int(switch_id).to_bytes(4,'big') + response_id.to_bytes(2,'big') + bytes.fromhex('00')
+                            self.loop.call_soon_threadsafe(self.send_request, response_packet)
+
+                            if packet_length >= 33 and int(packet[13]) == 219:
+                                #parse state and brightness change packet
+                                deviceID = self.home_devices[home_id][int(packet[21])]
+                                state = int(packet[27]) > 0
+                                brightness = int(packet[28]) if state else 0
+                                if deviceID in self.cync_switches:
+                                    self.cync_switches[deviceID].update_switch(state,brightness,self.cync_switches[deviceID].color_temp,self.cync_switches[deviceID].rgb)
+                            elif packet_length >= 25 and int(packet[13]) == 84:
+                                #parse motion and ambient light sensor packet
+                                deviceID = self.home_devices[home_id][int(packet[16])]
+                                motion = int(packet[22]) > 0
+                                ambient_light = int(packet[24]) > 0
+                                if deviceID in self.cync_motion_sensors:
+                                    self.cync_motion_sensors[deviceID].update_motion_sensor(motion)
+                                if deviceID in self.cync_ambient_light_sensors:
+                                    self.cync_ambient_light_sensors[deviceID].update_ambient_light_sensor(ambient_light)
+                            elif packet_length > 51 and int(packet[13]) == 82:
+                                #parse initial state packet
+                                switch_id = str(struct.unpack(">I", packet[0:4])[0])
+                                home_id = self.switchID_to_homeID[switch_id]
+                                self._add_connected_devices(switch_id, home_id)
+                                packet = packet[22:]
+                                while len(packet) > 24:
+                                    deviceID = self.home_devices[home_id][int(packet[0])]
+                                    if deviceID in self.cync_switches:
+                                        if self.cync_switches[deviceID].elements > 1:
+                                            for i in range(self.cync_switches[deviceID].elements):
+                                                device_id = self.home_devices[home_id][(i+1)*256 + int(packet[0])]
+                                                state = int((int(packet[12]) >> i) & int(packet[8])) > 0
+                                                brightness = 100 if state else 0
+                                                self.cync_switches[device_id].update_switch(state, brightness, self.cync_switches[device_id].color_temp, self.cync_switches[device_id].rgb)
+                                        else:
+                                            state = int(packet[8]) > 0
+                                            brightness = int(packet[12]) if state else 0
+                                            color_temp = int(packet[16])
+                                            rgb = {'r':int(packet[20]),'g':int(packet[21]),'b':int(packet[22]),'active':int(packet[16])==254}
+                                            self.cync_switches[deviceID].update_switch(state,brightness,color_temp,rgb)
+                                    packet = packet[24:]
+                        elif packet_type == 131:
+                            switch_id = str(struct.unpack(">I", packet[0:4])[0])
+                            home_id = self.switchID_to_homeID[switch_id]
+                            if packet_length >= 33 and int(packet[13]) == 219:
+                                #parse state and brightness change packet
+                                deviceID = self.home_devices[home_id][int(packet[21])]
+                                state = int(packet[27]) > 0
+                                brightness = int(packet[28]) if state else 0
+                                if deviceID in self.cync_switches:
+                                    self.cync_switches[deviceID].update_switch(state,brightness,self.cync_switches[deviceID].color_temp,self.cync_switches[deviceID].rgb)
+                            elif packet_length >= 25 and int(packet[13]) == 84:
+                                #parse motion and ambient light sensor packet
+                                deviceID = self.home_devices[home_id][int(packet[16])]
+                                motion = int(packet[22]) > 0
+                                ambient_light = int(packet[24]) > 0
+                                if deviceID in self.cync_motion_sensors:
+                                    self.cync_motion_sensors[deviceID].update_motion_sensor(motion)
+                                if deviceID in self.cync_ambient_light_sensors:
+                                    self.cync_ambient_light_sensors[deviceID].update_ambient_light_sensor(ambient_light)
+                        elif packet_type == 67 and packet_length >= 26 and int(packet[4]) == 1 and int(packet[5]) == 1 and int(packet[6]) == 6:
+                            #parse state packet
+                            switch_id = str(struct.unpack(">I", packet[0:4])[0])
+                            home_id = self.switchID_to_homeID[switch_id]
+                            packet = packet[7:]
+                            while len(packet) >= 19:
+                                if int(packet[3]) < len(self.home_devices[home_id]):
+                                    deviceID = self.home_devices[home_id][int(packet[3])]
+                                    if deviceID in self.cync_switches:
+                                        if self.cync_switches[deviceID].elements > 1:
+                                            for i in range(self.cync_switches[deviceID].elements):
+                                                device_id = self.home_devices[home_id][(i+1)*256 + int(packet[3])]
+                                                state = int((int(packet[5]) >> i) & int(packet[4])) > 0
+                                                brightness = 100 if state else 0
+                                                self.cync_switches[device_id].update_switch(state, brightness, self.cync_switches[device_id].color_temp, self.cync_switches[device_id].rgb)
+                                        else:
+                                            state = int(packet[4]) > 0
+                                            brightness = int(packet[5]) if state else 0
+                                            color_temp = int(packet[6])
+                                            rgb = {'r':int(packet[7]),'g':int(packet[8]),'b':int(packet[9]),'active':int(packet[6])==254}
+                                            self.cync_switches[deviceID].update_switch(state,brightness,color_temp,rgb)
+                                packet = packet[19:]
+                        elif packet_type == 171:
+                            switch_id = str(struct.unpack(">I", packet[0:4])[0])
+                            home_id = self.switchID_to_homeID[switch_id]
+                            self._add_connected_devices(switch_id, home_id)
+                        elif packet_type == 123:
+                            seq = str(struct.unpack(">H", packet[4:6])[0])
+                            command_received = self.pending_commands.get(seq,None)
+                            if command_received is not None:
+                                command_received(seq)
                 except Exception as e:
-                    _LOGGER.error("Error processing packet: %s", e)
-                data = data[packet_length + 5:]
+                    _LOGGER.error(str(type(e).__name__) + ": " + str(e))
+                data = data[packet_length+5:]
         raise ShuttingDown
 
-    def _process_packet(self, packet_type: int, packet: bytes, packet_length: int) -> None:
-        """Process received packet from the TCP stream."""
-        # Implement packet processing logic here
-        pass  # Placeholder for actual implementation
 
-    async def _maintain_connection(self) -> None:
-        """Send keep-alive messages to maintain the connection."""
+    async def _maintain_connection(self):
         while not self.shutting_down:
             await asyncio.sleep(180)
-            if self.writer:
-                self.writer.write(bytes.fromhex('d300000000'))
-                await self.writer.drain()
+            self.writer.write(bytes.fromhex('d300000000'))
+            await self.writer.drain()
         raise ShuttingDown
 
-    def _add_connected_devices(self, switch_id: str, home_id: str) -> None:
-        """Add devices to the list of connected devices."""
-        for dev in self.switchID_to_deviceIDs.get(switch_id, []):
+    def _add_connected_devices(self,switch_id, home_id):
+        for dev in self.switchID_to_deviceIDs[switch_id]:
+            #update list of WiFi connected devices
             if dev not in self.connected_devices[home_id]:
                 self.connected_devices[home_id].append(dev)
                 if self.connected_devices_updated:
                     for dev in self.cync_switches.values():
                         dev.update_controllers()
                     for room in self.cync_rooms.values():
-                        room.update_controllers()
+                        room.update_controllers() 
 
-    async def _update_connected_devices(self) -> None:
-        """Update the list of connected devices periodically."""
+    async def _update_connected_devices(self):
         while not self.shutting_down:
             self.connected_devices_updated = False
             for devices in self.connected_devices.values():
@@ -275,23 +259,15 @@ class CyncHub:
             while not self.logged_in:
                 await asyncio.sleep(2)
             attempts = 0
-            while True in [
-                len(devices) < len(self.home_controllers[home_id]) * 0.5
-                for home_id, devices in self.connected_devices.items()
-            ] and attempts < 10:
+            while True in [len(devices) < len(self.home_controllers[home_id]) * 0.5 for home_id,devices in self.connected_devices.items()] and attempts < 10:
                 for home_id, home_controllers in self.home_controllers.items():
                     for controller in home_controllers:
                         seq = self.get_seq_num()
-                        ping = (
-                            bytes.fromhex('a300000007')
-                            + int(controller).to_bytes(4, 'big')
-                            + seq.to_bytes(2, 'big')
-                            + bytes.fromhex('00')
-                        )
+                        ping = bytes.fromhex('a300000007') + int(controller).to_bytes(4,'big') + seq.to_bytes(2,'big') + bytes.fromhex('00')
                         self.loop.call_soon_threadsafe(self.send_request, ping)
                         await asyncio.sleep(0.15)
                 await asyncio.sleep(2)
-                attempts += 1
+                attempts += 1            
             for dev in self.cync_switches.values():
                 dev.update_controllers()
             for room in self.cync_rooms.values():
@@ -300,186 +276,694 @@ class CyncHub:
             await asyncio.sleep(3600)
         raise ShuttingDown
 
-    async def _update_state(self) -> None:
-        """Update the state of devices after connection is established."""
+    async def _update_state(self):
         while not self.connected_devices_updated:
             await asyncio.sleep(2)
         for connected_devices in self.connected_devices.values():
-            if connected_devices:
+            if len(connected_devices) > 0:
                 controller = self.cync_switches[connected_devices[0]].switch_id
                 seq = self.get_seq_num()
-                state_request = (
-                    bytes.fromhex('7300000018')
-                    + int(controller).to_bytes(4, 'big')
-                    + seq.to_bytes(2, 'big')
-                    + bytes.fromhex('007e00000000f85206000000ffff0000567e')
-                )
-                self.loop.call_soon_threadsafe(self.send_request, state_request)
-        while any(
-            dev._update_callback is None for dev in self.cync_switches.values()
-        ) and any(
-            room._update_callback is None for room in self.cync_rooms.values()
-        ):
+                state_request = bytes.fromhex('7300000018') + int(controller).to_bytes(4,'big') + seq.to_bytes(2,'big') + bytes.fromhex('007e00000000f85206000000ffff0000567e')
+                self.loop.call_soon_threadsafe(self.send_request,state_request)
+        while False in [self.cync_switches[dev_id]._update_callback is not None for dev_id in self.options["switches"]] and False in [self.cync_rooms[dev_id]._update_callback is not None for dev_id in self.options["rooms"]]:
             await asyncio.sleep(2)
         for dev in self.cync_switches.values():
             dev.publish_update()
         for room in self.cync_rooms.values():
-            room.publish_update()
+            dev.publish_update()
+            
+    def send_request(self,request):
+        async def send():
+            self.writer.write(request)
+            await self.writer.drain()
+        self.loop.create_task(send())
+        
+    def combo_control(self,state,brightness,color_tone,rgb,switch_id,mesh_id,seq):
+        combo_request = bytes.fromhex('7300000022') + int(switch_id).to_bytes(4,'big') + int(seq).to_bytes(2,'big') + bytes.fromhex('007e00000000f8f010000000000000') + mesh_id + bytes.fromhex('f00000') + (1 if state else 0).to_bytes(1,'big')  + brightness.to_bytes(1,'big') + color_tone.to_bytes(1,'big') + rgb[0].to_bytes(1,'big') + rgb[1].to_bytes(1,'big') + rgb[2].to_bytes(1,'big') + ((496 + int(mesh_id[0]) + int(mesh_id[1]) + (1 if state else 0) + brightness + color_tone + sum(rgb))%256).to_bytes(1,'big') + bytes.fromhex('7e')
+        self.loop.call_soon_threadsafe(self.send_request,combo_request)
 
-    def send_request(self, request: bytes) -> None:
-        """Send a request to the Cync server."""
-        async def send() -> None:
-            if self.writer:
-                self.writer.write(request)
-                await self.writer.drain()
-        if self.loop:
-            self.loop.create_task(send())
+    def turn_on(self,switch_id,mesh_id,seq):
+        power_request = bytes.fromhex('730000001f') + int(switch_id).to_bytes(4,'big') + int(seq).to_bytes(2,'big') + bytes.fromhex('007e00000000f8d00d000000000000') + mesh_id + bytes.fromhex('d00000010000') + ((430 + int(mesh_id[0]) + int(mesh_id[1]))%256).to_bytes(1,'big') + bytes.fromhex('7e')
+        self.loop.call_soon_threadsafe(self.send_request,power_request)
 
-    def combo_control(
-        self,
-        state: bool,
-        brightness: int,
-        color_tone: int,
-        rgb: List[int],
-        switch_id: str,
-        mesh_id: bytes,
-        seq: int,
-    ) -> None:
-        """Send combo control command."""
-        # Implement the combo control logic here
-        pass  # Placeholder for actual implementation
+    def turn_off(self,switch_id,mesh_id,seq):
+        power_request = bytes.fromhex('730000001f') + int(switch_id).to_bytes(4,'big') + int(seq).to_bytes(2,'big') + bytes.fromhex('007e00000000f8d00d000000000000') + mesh_id + bytes.fromhex('d00000000000') + ((429 + int(mesh_id[0]) + int(mesh_id[1]))%256).to_bytes(1,'big') + bytes.fromhex('7e')
+        self.loop.call_soon_threadsafe(self.send_request,power_request)
 
-    def turn_on(self, switch_id: str, mesh_id: bytes, seq: int) -> None:
-        """Send command to turn on a device."""
-        # Implement the turn on logic here
-        pass  # Placeholder for actual implementation
+    def set_color_temp(self,color_temp,switch_id,mesh_id,seq):
+        color_temp_request = bytes.fromhex('730000001e') + int(switch_id).to_bytes(4,'big') + int(seq).to_bytes(2,'big') + bytes.fromhex('007e00000000f8e20c000000000000') + mesh_id + bytes.fromhex('e2000005') + color_temp.to_bytes(1,'big') + ((469 + int(mesh_id[0]) + int(mesh_id[1]) + color_temp)%256).to_bytes(1,'big') + bytes.fromhex('7e')
+        self.loop.call_soon_threadsafe(self.send_request,color_temp_request)
 
-    def turn_off(self, switch_id: str, mesh_id: bytes, seq: int) -> None:
-        """Send command to turn off a device."""
-        # Implement the turn off logic here
-        pass  # Placeholder for actual implementation
-
-    def set_color_temp(self, color_temp: int, switch_id: str, mesh_id: bytes, seq: int) -> None:
-        """Set the color temperature of a device."""
-        # Implement the set color temperature logic here
-        pass  # Placeholder for actual implementation
-
-    def get_seq_num(self) -> int:
-        """Get the next sequence number."""
+    def get_seq_num(self):
         if self._seq_num == 65535:
             self._seq_num = 1
         else:
             self._seq_num += 1
         return self._seq_num
 
-# Implement the CyncRoom, CyncSwitch, CyncMotionSensor, CyncAmbientLightSensor classes
-# ensuring no code is executed at module level
-
 class CyncRoom:
-    """Representation of a Cync Room."""
 
-    def __init__(self, room_id: str, room_info: dict, hub: CyncHub) -> None:
-        """Initialize the Cync Room."""
+    def __init__(self, room_id, room_info, hub):
+
         self.hub = hub
         self.room_id = room_id
         self.home_id = room_id.split('-')[0]
-        self.name = room_info.get('name', 'unknown')
-        self.home_name = room_info.get('home_name', 'unknown')
+        self.name = room_info.get('name','unknown')
+        self.home_name = room_info.get('home_name','unknown')
         self.parent_room = room_info.get('parent_room', 'unknown')
-        self.mesh_id = int(room_info.get('mesh_id', 0)).to_bytes(2, 'little')
+        self.mesh_id = int(room_info.get('mesh_id',0)).to_bytes(2,'little')
         self.power_state = False
         self.brightness = 0
-        self.color_temp_kelvin = 0
-        self.rgb = {'r': 0, 'g': 0, 'b': 0, 'active': False}
-        self.switches = room_info.get('switches', [])
-        self.subgroups = room_info.get('subgroups', [])
+        self.color_temp = 0
+        self.rgb = {'r':0, 'g':0, 'b':0, 'active': False}
+        self.switches = room_info.get('switches',[])
+        self.subgroups = room_info.get('subgroups',[])
         self.is_subgroup = room_info.get('isSubgroup', False)
-        self.all_room_switches = self.switches.copy()
-        self.controllers: List[str] = []
-        self.default_controller = room_info.get('room_controller', self.hub.home_controllers[self.home_id][0])
-        self._update_callback: Optional[Callable[[], None]] = None
-        self._update_parent_room: Optional[Callable[[], None]] = None
+        self.all_room_switches = self.switches
+        self.controllers = []
+        self.default_controller = room_info.get('room_controller',self.hub.home_controllers[self.home_id][0])
+        self._update_callback = None
+        self._update_parent_room = None
         self.support_brightness = False
         self.support_color_temp = False
         self.support_rgb = False
-        self.switches_support_brightness: List[str] = []
-        self.switches_support_color_temp: List[str] = []
-        self.switches_support_rgb: List[str] = []
-        self.groups_support_brightness: List[str] = []
-        self.groups_support_color_temp: List[str] = []
-        self.groups_support_rgb: List[str] = []
-        self._command_timeout = 0.5
+        self.switches_support_brightness = False
+        self.switches_support_color_temp = False
+        self.switches_support_rgb = False
+        self.groups_support_brightness = False
+        self.groups_support_color_temp = False
+        self.groups_support_rgb = False
+        self._command_timout = 0.5
         self._command_retry_time = 5
 
-    def initialize(self) -> None:
-        """Initialize supported features and register update functions."""
-        # Implementation as before
-        pass
+    def initialize(self):
+        """Initialization of supported features and registration of update function for all switches and subgroups in the room"""
+        self.switches_support_brightness = [device_id for device_id in self.switches if self.hub.cync_switches[device_id].support_brightness]
+        self.switches_support_color_temp = [device_id for device_id in self.switches if self.hub.cync_switches[device_id].support_color_temp]
+        self.switches_support_rgb = [device_id for device_id in self.switches if self.hub.cync_switches[device_id].support_rgb]
+        self.groups_support_brightness = [room_id for room_id in self.subgroups if self.hub.cync_rooms[room_id].support_brightness]
+        self.groups_support_color_temp = [room_id for room_id in self.subgroups if self.hub.cync_rooms[room_id].support_color_temp]
+        self.groups_support_rgb = [room_id for room_id in self.subgroups if self.hub.cync_rooms[room_id].support_rgb] 
+        self.support_brightness = (len(self.switches_support_brightness) + len(self.groups_support_brightness)) > 0
+        self.support_color_temp = (len(self.switches_support_color_temp) + len(self.groups_support_color_temp)) > 0
+        self.support_rgb = (len(self.switches_support_rgb) + len(self.groups_support_rgb)) > 0
+        for switch_id in self.switches:
+            self.hub.cync_switches[switch_id].register_room_updater(self.update_room)
+        for subgroup in self.subgroups:
+            self.hub.cync_rooms[subgroup].register_room_updater(self.update_room)
+            self.all_room_switches = self.all_room_switches + self.hub.cync_rooms[subgroup].switches
+        for subgroup in self.subgroups:
+            self.hub.cync_rooms[subgroup].all_room_switches = self.all_room_switches
 
-    # Rest of the methods for CyncRoom
+    def register(self, update_callback) -> None:
+        """Register callback, called when switch changes state."""
+        self._update_callback = update_callback
+
+    def reset(self) -> None:
+        """Remove previously registered callback."""
+        self._update_callback = None
+
+    def register_room_updater(self, parent_updater):
+        self._update_parent_room = parent_updater
+
+    @property
+    def max_mireds(self) -> int:
+        """Return minimum supported color temperature."""
+        return 500
+
+    @property
+    def min_mireds(self) -> int:
+        """Return maximum supported color temperature."""
+        return 200
+
+    async def turn_on(self, attr_rgb, attr_br, attr_ct) -> None:
+        """Turn on the light."""
+        attempts = 0
+        update_received = False
+        while not update_received and attempts < int(self._command_retry_time/self._command_timout):
+            seq = str(self.hub.get_seq_num())
+            if len(self.controllers) > 0:
+                controller = self.controllers[attempts%len(self.controllers)]
+            else:
+                controller = self.default_controller
+            if attr_rgb is not None and attr_br is not None:
+                if math.isclose(attr_br, max([self.rgb['r'],self.rgb['g'],self.rgb['b']])*self.brightness/100, abs_tol = 2):
+                    self.hub.combo_control(True, self.brightness, 254, attr_rgb, controller, self.mesh_id, seq)
+                else:
+                    self.hub.combo_control(True, round(attr_br*100/255), 255, [255,255,255], controller, self.mesh_id, seq)
+            elif attr_rgb is None and attr_ct is None and attr_br is not None:
+                self.hub.combo_control(True, round(attr_br*100/255), 255, [255,255,255], controller, self.mesh_id, seq)
+            elif attr_rgb is not None and attr_br is None:
+                self.hub.combo_control(True, self.brightness, 254, attr_rgb, controller, self.mesh_id, seq)
+            elif attr_ct is not None:
+                ct = round(100*(self.max_mireds - attr_ct)/(self.max_mireds - self.min_mireds))
+                self.hub.set_color_temp(ct, controller, self.mesh_id, seq)
+            else:
+                self.hub.turn_on(controller, self.mesh_id, seq)
+            self.hub.pending_commands[seq] = self.command_received
+            await asyncio.sleep(self._command_timout)
+            if self.hub.pending_commands.get(seq, None) is not None:
+                self.hub.pending_commands.pop(seq)
+                attempts += 1
+            else:
+                update_received = True
+
+    async def turn_off(self, **kwargs: Any) -> None:
+        """Turn off the light."""
+        attempts = 0
+        update_received = False
+        while not update_received and attempts < int(self._command_retry_time/self._command_timout):
+            seq = str(self.hub.get_seq_num())
+            if len(self.controllers) > 0:
+                controller = self.controllers[attempts%len(self.controllers)]
+            else:
+                controller = self.default_controller
+            self.hub.turn_off(controller, self.mesh_id, seq)
+            self.hub.pending_commands[seq] = self.command_received
+            await asyncio.sleep(self._command_timout)
+            if self.hub.pending_commands.get(seq, None) is not None:
+                self.hub.pending_commands.pop(seq)
+                attempts += 1
+            else:
+                update_received = True
+
+    def command_received(self, seq):
+        """Remove command from hub.pending_commands when a reply is received from Cync server"""
+        if self.hub.pending_commands.get(seq) is not None:
+            self.hub.pending_commands.pop(seq)
+
+    def update_room(self):
+        """Update the current state of the room"""
+        _brightness = self.brightness
+        _color_temp = self.color_temp
+        _rgb = self.rgb
+        _power_state = True in ([self.hub.cync_switches[device_id].power_state for device_id in self.switches] + [self.hub.cync_rooms[room_id].power_state for room_id in self.subgroups])
+        if self.support_brightness:
+            _brightness = round(sum([self.hub.cync_switches[device_id].brightness for device_id in self.switches] + [self.hub.cync_rooms[room_id].brightness for room_id in self.subgroups])/(len(self.switches) + len(self.subgroups)))
+        else:
+            _brightness = 100 if _power_state else 0
+        if self.support_color_temp:
+            _color_temp = round(sum([self.hub.cync_switches[device_id].color_temp for device_id in self.switches_support_color_temp] + [self.hub.cync_rooms[room_id].color_temp for room_id in self.groups_support_color_temp])/(len(self.switches_support_color_temp) + len(self.groups_support_color_temp)))
+        if self.support_rgb:
+            _rgb['r'] = round(sum([self.hub.cync_switches[device_id].rgb['r'] for device_id in self.switches_support_rgb] + [self.hub.cync_rooms[room_id].rgb['r'] for room_id in self.groups_support_rgb])/(len(self.switches_support_rgb) + len(self.groups_support_rgb)))
+            _rgb['g'] = round(sum([self.hub.cync_switches[device_id].rgb['g'] for device_id in self.switches_support_rgb] + [self.hub.cync_rooms[room_id].rgb['g'] for room_id in self.groups_support_rgb])/(len(self.switches_support_rgb) + len(self.groups_support_rgb)))
+            _rgb['b'] = round(sum([self.hub.cync_switches[device_id].rgb['b'] for device_id in self.switches_support_rgb] + [self.hub.cync_rooms[room_id].rgb['b'] for room_id in self.groups_support_rgb])/(len(self.switches_support_rgb) + len(self.groups_support_rgb)))
+            _rgb['active'] = True in ([self.hub.cync_switches[device_id].rgb['active'] for device_id in self.switches_support_rgb] + [self.hub.cync_rooms[room_id].rgb['active'] for room_id in self.groups_support_rgb])
+        
+        if _power_state != self.power_state or _brightness != self.brightness or _color_temp != self.color_temp or _rgb != self.rgb:
+            self.power_state = _power_state
+            self.brightness = _brightness
+            self.color_temp = _color_temp
+            self.rgb = _rgb
+            self.publish_update()
+            if self._update_parent_room:
+                self._update_parent_room()
+
+    def update_controllers(self):
+        """Update the list of responsive, Wi-Fi connected controller devices"""
+        connected_devices = self.hub.connected_devices[self.home_id]
+        controllers = []
+        if len(connected_devices) > 0:
+            controllers = [self.hub.cync_switches[dev_id].switch_id for dev_id in self.all_room_switches if dev_id in connected_devices]
+            others_available = [self.hub.cync_switches[dev_id].switch_id for dev_id in connected_devices]
+            for controller in controllers:
+                if controller in others_available:
+                    others_available.remove(controller)
+            self.controllers = controllers + others_available
+        else:
+            self.controllers = [self.default_controller]
+
+    def publish_update(self):
+        if self._update_callback:
+            self._update_callback()
 
 class CyncSwitch:
-    """Representation of a Cync Switch."""
 
-    def __init__(self, device_id: str, switch_info: dict, room: Optional[CyncRoom], hub: CyncHub) -> None:
-        """Initialize the Cync Switch."""
-        # Implementation as before
-        pass
+    def __init__(self, device_id, switch_info, room, hub):
+        self.hub = hub
+        self.device_id = device_id
+        self.switch_id = switch_info.get('switch_id','0')
+        self.home_id = [home_id for home_id, home_devices in self.hub.home_devices.items() if self.device_id in home_devices][0]
+        self.name = switch_info.get('name','unknown')
+        self.home_name = switch_info.get('home_name','unknown')
+        self.mesh_id = switch_info.get('mesh_id',0).to_bytes(2,'little')
+        self.room = room
+        self.power_state = False
+        self.brightness = 0
+        self.color_temp = 0
+        self.rgb = {'r':0, 'g':0, 'b':0, 'active':False}
+        self.default_controller = switch_info.get('switch_controller',self.hub.home_controllers[self.home_id][0])
+        self.controllers = []
+        self._update_callback = None
+        self._update_parent_room = None
+        self.support_brightness = switch_info.get('BRIGHTNESS',False)
+        self.support_color_temp = switch_info.get('COLORTEMP',False)
+        self.support_rgb = switch_info.get('RGB',False)
+        self.plug = switch_info.get('PLUG',False)
+        self.fan = switch_info.get('FAN',False)
+        self.elements = switch_info.get('MULTIELEMENT',1)
+        self._command_timout = 0.5
+        self._command_retry_time = 5
 
-    # Rest of the methods for CyncSwitch
+    def register(self, update_callback) -> None:
+        """Register callback, called when switch changes state."""
+        self._update_callback = update_callback
+
+    def reset(self) -> None:
+        """Remove previously registered callback."""
+        self._update_callback = None
+
+    def register_room_updater(self, parent_updater):
+        self._update_parent_room = parent_updater
+
+    @property
+    def max_mireds(self) -> int:
+        """Return minimum supported color temperature."""
+        return 500
+
+    @property
+    def min_mireds(self) -> int:
+        """Return maximum supported color temperature."""
+        return 200
+
+    async def turn_on(self, attr_rgb, attr_br, attr_ct) -> None:
+        """Turn on the light."""
+        attempts = 0
+        update_received = False
+        while not update_received and attempts < int(self._command_retry_time/self._command_timout):
+            seq = str(self.hub.get_seq_num())
+            if len(self.controllers) > 0:
+                controller = self.controllers[attempts%len(self.controllers)]
+            else:
+                controller = self.default_controller
+            if attr_rgb is not None and attr_br is not None:
+                if math.isclose(attr_br, max([self.rgb['r'],self.rgb['g'],self.rgb['b']])*self.brightness/100, abs_tol = 2):
+                    self.hub.combo_control(True, self.brightness, 254, attr_rgb, controller, self.mesh_id, seq)
+                else:
+                    self.hub.combo_control(True, round(attr_br*100/255), 255, [255,255,255], controller, self.mesh_id, seq)
+            elif attr_rgb is None and attr_ct is None and attr_br is not None:
+                self.hub.combo_control(True, round(attr_br*100/255), 255, [255,255,255], controller, self.mesh_id, seq)
+            elif attr_rgb is not None and attr_br is None:
+                self.hub.combo_control(True, self.brightness, 254, attr_rgb, controller, self.mesh_id, seq)
+            elif attr_ct is not None:
+                ct = round(100*(self.max_mireds - attr_ct)/(self.max_mireds - self.min_mireds))
+                self.hub.set_color_temp(ct, controller, self.mesh_id, seq)
+            else:
+                self.hub.turn_on(controller, self.mesh_id, seq)
+            self.hub.pending_commands[seq] = self.command_received
+            await asyncio.sleep(self._command_timout)
+            if self.hub.pending_commands.get(seq, None) is not None:
+                self.hub.pending_commands.pop(seq)
+                attempts += 1
+            else:
+                update_received = True
+
+    async def turn_off(self, **kwargs: Any) -> None:
+        """Turn off the light."""
+        attempts = 0
+        update_received = False
+        while not update_received and attempts < int(self._command_retry_time/self._command_timout):
+            seq = str(self.hub.get_seq_num())
+            if len(self.controllers) > 0:
+                controller = self.controllers[attempts%len(self.controllers)]
+            else:
+                controller = self.default_controller
+            self.hub.turn_off(controller, self.mesh_id, seq)
+            self.hub.pending_commands[seq] = self.command_received
+            await asyncio.sleep(self._command_timout)
+            if self.hub.pending_commands.get(seq, None) is not None:
+                self.hub.pending_commands.pop(seq)
+                attempts += 1
+            else:
+                update_received = True
+
+    def command_received(self, seq):
+        """Remove command from hub.pending_commands when a reply is received from Cync server"""
+        if self.hub.pending_commands.get(seq) is not None:
+            self.hub.pending_commands.pop(seq)
+
+    def update_switch(self,state,brightness,color_temp,rgb):
+        """Update the state of the switch as updates are received from the Cync server"""
+        self.update_received = True
+        if self.power_state != state or self.brightness != brightness or self.color_temp != color_temp or self.rgb != rgb:
+            self.power_state = state
+            self.brightness = brightness if self.support_brightness and state else 100 if state else 0
+            self.color_temp = color_temp 
+            self.rgb = rgb
+            self.publish_update()
+            if self._update_parent_room:
+                self._update_parent_room()
+
+    def update_controllers(self):
+        """Update the list of responsive, Wi-Fi connected controller devices"""
+        connected_devices = self.hub.connected_devices[self.home_id]
+        controllers = []
+        if len(connected_devices) > 0:
+            if int(self.switch_id) > 0:
+                if self.device_id in connected_devices: 
+                    #if this device is connected, make this the first available controller
+                    controllers.append(self.switch_id)
+            if self.room:
+                controllers = controllers + [self.hub.cync_switches[device_id].switch_id for device_id in self.room.all_room_switches if device_id in connected_devices and device_id != self.device_id]
+            others_available = [self.hub.cync_switches[device_id].switch_id for device_id in connected_devices]
+            for controller in controllers:
+                if controller in others_available:
+                    others_available.remove(controller)
+            self.controllers = controllers + others_available
+        else:
+            self.controllers = [self.default_controller]
+
+    def publish_update(self):
+        if self._update_callback:
+            self._update_callback()
 
 class CyncMotionSensor:
-    """Representation of a Cync Motion Sensor."""
 
-    def __init__(self, device_id: str, device_info: dict, room: Optional[CyncRoom]) -> None:
-        """Initialize the motion sensor."""
-        # Implementation as before
-        pass
+    def __init__(self, device_id, device_info, room):
+        
+        self.device_id = device_id
+        self.name = device_info['name']
+        self.home_name = device_info['home_name']
+        self.room = room
+        self.motion = False
+        self._update_callback = None
 
-    # Rest of the methods for CyncMotionSensor
+    def register(self, update_callback) -> None:
+        """Register callback, called when switch changes state."""
+        self._update_callback = update_callback
+
+    def reset(self) -> None:
+        """Remove previously registered callback."""
+        self._update_callback = None
+
+    def update_motion_sensor(self,motion):
+        self.motion = motion
+        self.publish_update()
+
+    def publish_update(self):
+        if self._update_callback:
+            self._update_callback()
 
 class CyncAmbientLightSensor:
-    """Representation of a Cync Ambient Light Sensor."""
 
-    def __init__(self, device_id: str, device_info: dict, room: Optional[CyncRoom]) -> None:
-        """Initialize the ambient light sensor."""
-        # Implementation as before
-        pass
+    def __init__(self, device_id, device_info, room):
+        
+        self.device_id = device_id
+        self.name = device_info['name']
+        self.home_name = device_info['home_name']
+        self.room = room
+        self.ambient_light = False
+        self._update_callback = None
 
-    # Rest of the methods for CyncAmbientLightSensor
+    def register(self, update_callback) -> None:
+        """Register callback, called when switch changes state."""
+        self._update_callback = update_callback
+
+    def reset(self) -> None:
+        """Remove previously registered callback."""
+        self._update_callback = None
+
+    def update_ambient_light_sensor(self,ambient_light):
+        self.ambient_light = ambient_light
+        self.publish_update()
+
+    def publish_update(self):
+        if self._update_callback:
+            self._update_callback()
 
 class CyncUserData:
     """Class to handle user authentication and data retrieval."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the user data."""
-        self.username = ''
-        self.password = ''
-        self.auth_code = None
-        self.user_credentials = {}
+        self.username: str = ''
+        self.password: str = ''
+        self.auth_code: Optional[List[int]] = None
+        self.user_credentials: Dict[str, Any] = {}
 
-    async def authenticate(self, username: str, password: str) -> dict:
+    async def authenticate(self, username: str, password: str) -> Dict[str, Any]:
         """Authenticate with the API and get a token."""
-        # Implementation as before
-        pass
+        self.username = username
+        self.password = password
+        auth_data = {
+            'corp_id': "1007d2ad150c4000",
+            'email': self.username,
+            'password': self.password
+        }
+        async with aiohttp.ClientSession() as session:
+            async with session.post(API_AUTH, json=auth_data) as resp:
+                if resp.status == 200:
+                    self.user_credentials = await resp.json()
+                    self._generate_login_code()
+                    return {'authorized': True}
+                elif resp.status == 400:
+                    return await self._request_two_factor_code(session)
+                else:
+                    _LOGGER.error("Authentication failed with status code: %s", resp.status)
+                    return {'authorized': False, 'two_factor_code_required': False}
 
-    async def auth_two_factor(self, code: str) -> dict:
+    async def _request_two_factor_code(self, session: aiohttp.ClientSession) -> Dict[str, Any]:
+        """Request two-factor code."""
+        request_code_data = {
+            'corp_id': "1007d2ad150c4000",
+            'email': self.username,
+            'local_lang': "en-us"
+        }
+        async with session.post(API_REQUEST_CODE, json=request_code_data) as resp:
+            if resp.status == 200:
+                return {'authorized': False, 'two_factor_code_required': True}
+            else:
+                _LOGGER.error("Two-factor code request failed with status code: %s", resp.status)
+                return {'authorized': False, 'two_factor_code_required': False}
+
+    async def auth_two_factor(self, code: str) -> Dict[str, Any]:
         """Authenticate with two-factor code."""
-        # Implementation as before
-        pass
+        two_factor_data = {
+            'corp_id': "1007d2ad150c4000",
+            'email': self.username,
+            'password': self.password,
+            'two_factor': code,
+            'resource': "abcdefghijklmnop"
+        }
+        async with aiohttp.ClientSession() as session:
+            async with session.post(API_2FACTOR_AUTH, json=two_factor_data) as resp:
+                if resp.status == 200:
+                    self.user_credentials = await resp.json()
+                    self._generate_login_code()
+                    return {'authorized': True}
+                else:
+                    _LOGGER.error("Two-factor authentication failed with status code: %s", resp.status)
+                    return {'authorized': False}
 
-    async def get_cync_config(self) -> dict:
+    def _generate_login_code(self) -> None:
+        """Generate the login code from user credentials."""
+        authorize = self.user_credentials['authorize']
+        user_id = int(self.user_credentials['user_id'])
+        login_code = (
+            bytes.fromhex('13000000')
+            + (10 + len(authorize)).to_bytes(1, 'big')
+            + bytes.fromhex('03')
+            + user_id.to_bytes(4, 'big')
+            + len(authorize).to_bytes(2, 'big')
+            + authorize.encode('ascii')
+            + bytes.fromhex('0000b4')
+        )
+        self.auth_code = list(login_code)
+
+    async def get_cync_config(self) -> Dict[str, Any]:
         """Retrieve the Cync configuration."""
-        # Implementation as before
-        pass
+        home_devices: Dict[str, List[str]] = {}
+        home_controllers: Dict[str, List[str]] = {}
+        switchID_to_homeID: Dict[str, str] = {}
+        devices: Dict[str, Any] = {}
+        rooms: Dict[str, Any] = {}
+        homes = await self._get_homes()
+        if not homes:
+            _LOGGER.error("No homes found for user.")
+            raise InvalidCyncConfiguration("No homes found for user.")
 
-    async def _get_homes(self) -> list:
-        """Get a list of homes for the user."""
-        # Implementation as before
-        pass
+        for home in homes:
+            home_id = str(home['id'])
+            product_id = home['product_id']
+            home_info = await self._get_home_properties(product_id, home_id)
+            if not home_info:
+                continue
 
-    async def _get_home_properties(self, product_id: str, device_id: str) -> dict:
+            if (
+                'groupsArray' in home_info
+                and 'bulbsArray' in home_info
+                and home_info['groupsArray']
+                and home_info['bulbsArray']
+            ):
+                try:
+                    await self._process_home_info(
+                        home_id,
+                        home,
+                        home_info,
+                        home_devices,
+                        home_controllers,
+                        switchID_to_homeID,
+                        devices,
+                        rooms
+                    )
+                except Exception as e:
+                    _LOGGER.error("Error processing home info: %s", e)
+                    continue
+
+        if not rooms or not devices or not home_controllers or not home_devices or not switchID_to_homeID:
+            _LOGGER.error("Invalid Cync configuration detected.")
+            raise InvalidCyncConfiguration("Invalid Cync configuration detected.")
+
+        return {
+            'rooms': rooms,
+            'devices': devices,
+            'home_devices': home_devices,
+            'home_controllers': home_controllers,
+            'switchID_to_homeID': switchID_to_homeID
+        }
+
+    async def _process_home_info(
+        self,
+        home_id: str,
+        home: Dict[str, Any],
+        home_info: Dict[str, Any],
+        home_devices: Dict[str, List[str]],
+        home_controllers: Dict[str, List[str]],
+        switchID_to_homeID: Dict[str, str],
+        devices: Dict[str, Any],
+        rooms: Dict[str, Any]
+    ) -> None:
+        """Process home information and populate devices and rooms."""
+        bulbs_array = home_info['bulbsArray']
+        groups_array = home_info['groupsArray']
+        max_index = max(
+            ((device['deviceID'] % int(home_id)) % 1000) + ((device['deviceID'] % int(home_id)) // 1000) * 256
+            for device in bulbs_array
+        ) + 1
+        home_devices[home_id] = [""] * max_index
+        home_controllers[home_id] = []
+        for device in bulbs_array:
+            device_type = device['deviceType']
+            device_id = str(device['deviceID'])
+            current_index = ((device['deviceID'] % int(home_id)) % 1000) + ((device['deviceID'] % int(home_id)) // 1000) * 256
+            home_devices[home_id][current_index] = device_id
+            devices[device_id] = {
+                'name': device.get('displayName', 'Unknown'),
+                'mesh_id': current_index,
+                'switch_id': str(device.get('switchID', 0)),
+                'ONOFF': device_type in Capabilities['ONOFF'],
+                'BRIGHTNESS': device_type in Capabilities["BRIGHTNESS"],
+                "COLORTEMP": device_type in Capabilities["COLORTEMP"],
+                "RGB": device_type in Capabilities["RGB"],
+                "MOTION": device_type in Capabilities["MOTION"],
+                "AMBIENT_LIGHT": device_type in Capabilities["AMBIENT_LIGHT"],
+                "WIFICONTROL": device_type in Capabilities["WIFICONTROL"],
+                "PLUG": device_type in Capabilities["PLUG"],
+                "FAN": device_type in Capabilities["FAN"],
+                'home_name': home.get('name', 'Unknown'),
+                'room': '',
+                'room_name': ''
+            }
+            if str(device_type) in Capabilities['MULTIELEMENT'] and current_index < 256:
+                devices[device_id]['MULTIELEMENT'] = Capabilities['MULTIELEMENT'][str(device_type)]
+            if devices[device_id].get('WIFICONTROL', False) and device.get('switchID', 0) > 0:
+                switch_id_str = str(device['switchID'])
+                switchID_to_homeID[switch_id_str] = home_id
+                devices[device_id]['switch_controller'] = switch_id_str
+                home_controllers[home_id].append(switch_id_str)
+        if not home_controllers[home_id]:
+            _LOGGER.warning("No controllers found in home %s. Skipping home.", home_id)
+            # Remove devices from this home
+            for device in bulbs_array:
+                device_id = str(device['deviceID'])
+                devices.pop(device_id, None)
+            home_devices.pop(home_id, None)
+            home_controllers.pop(home_id, None)
+            return
+
+        for room in groups_array:
+            if room.get('deviceIDArray') or room.get('subgroupIDArray'):
+                room_id = f"{home_id}-{room['groupID']}"
+                room_controller = home_controllers[home_id][0]
+                device_ids = room.get('deviceIDArray', [])
+                available_controllers = [
+                    devices[home_devices[home_id][(dev_id % 1000) + ((dev_id // 1000) * 256)]]['switch_controller']
+                    for dev_id in device_ids
+                    if 'switch_controller' in devices[home_devices[home_id][(dev_id % 1000) + ((dev_id // 1000) * 256)]]
+                ]
+                if available_controllers:
+                    room_controller = available_controllers[0]
+                for dev_id in device_ids:
+                    index = (dev_id % 1000) + ((dev_id // 1000) * 256)
+                    device = devices[home_devices[home_id][index]]
+                    device['room'] = room_id
+                    device['room_name'] = room.get('displayName', 'Unknown')
+                    if 'switch_controller' not in device and device.get('ONOFF', False):
+                        device['switch_controller'] = room_controller
+                rooms[room_id] = {
+                    'name': room.get('displayName', 'Unknown'),
+                    'mesh_id': room['groupID'],
+                    'room_controller': room_controller,
+                    'home_name': home.get('name', 'Unknown'),
+                    'switches': [
+                        home_devices[home_id][(dev_id % 1000) + ((dev_id // 1000) * 256)]
+                        for dev_id in device_ids
+                        if devices[home_devices[home_id][(dev_id % 1000) + ((dev_id // 1000) * 256)]].get('ONOFF', False)
+                    ],
+                    'isSubgroup': room.get('isSubgroup', False),
+                    'subgroups': [
+                        f"{home_id}-{subgroup_id}" for subgroup_id in room.get('subgroupIDArray', [])
+                    ]
+                }
+        # Update parent rooms for subgroups
+        for room_id, room_info in rooms.items():
+            if not room_info.get("isSubgroup", False) and room_info.get("subgroups"):
+                for subgroup_id in room_info["subgroups"].copy():
+                    subgroup = rooms.get(subgroup_id)
+                    if subgroup:
+                        subgroup["parent_room"] = room_info["name"]
+                    else:
+                        _LOGGER.warning("Subgroup %s not found. Removing from room %s.", subgroup_id, room_id)
+                        room_info["subgroups"].remove(subgroup_id)
+
+    async def _get_homes(self) -> List[Dict[str, Any]]:
+        """Get a list of homes for a particular user."""
+        headers = {'Access-Token': self.user_credentials['access_token']}
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                API_DEVICES.format(user_id=self.user_credentials['user_id']),
+                headers=headers
+            ) as resp:
+                if resp.status == 200:
+                    response = await resp.json()
+                    return response
+                else:
+                    _LOGGER.error("Failed to get homes with status code: %s", resp.status)
+                    return []
+
+    async def _get_home_properties(self, product_id: int, device_id: str) -> Optional[Dict[str, Any]]:
         """Get properties for a single home."""
-        # Implementation as before
-        pass
+        headers = {'Access-Token': self.user_credentials['access_token']}
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                API_DEVICE_INFO.format(product_id=product_id, device_id=device_id),
+                headers=headers
+            ) as resp:
+                if resp.status == 200:
+                    response = await resp.json()
+                    return response
+                else:
+                    _LOGGER.error(
+                        "Failed to get properties for home %s with status code: %s",
+                        device_id, resp.status
+                    )
+                    return None
 
+class LostConnection(Exception):
+    """Lost connection to Cync Server"""
+
+class ShuttingDown(Exception):
+    """Cync client shutting down"""
+
+class InvalidCyncConfiguration(Exception):
+    """Cync configuration is not supported"""
