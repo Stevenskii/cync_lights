@@ -402,7 +402,7 @@ class CyncRoom:
         """Turn on the light."""
         attempts = 0
         update_received = False
-        while not update_received and attempts < int(self._command_retry_time/self._command_timout):
+        while not update_received and attempts < int(self._command_retry_time/self._command_timeout):
             seq = str(self.hub.get_seq_num())
             if len(self.controllers) > 0:
                 controller = self.controllers[attempts%len(self.controllers)]
@@ -431,7 +431,7 @@ class CyncRoom:
             else:
                 self.hub.turn_on(controller, self.mesh_id, seq)
             self.hub.pending_commands[seq] = self.command_received
-            await asyncio.sleep(self._command_timout)
+            await asyncio.sleep(self._command_timeout)
             if self.hub.pending_commands.get(seq, None) is not None:
                 self.hub.pending_commands.pop(seq)
                 attempts += 1
@@ -442,7 +442,7 @@ class CyncRoom:
         """Turn off the light."""
         attempts = 0
         update_received = False
-        while not update_received and attempts < int(self._command_retry_time/self._command_timout):
+        while not update_received and attempts < int(self._command_retry_time/self._command_timeout):
             seq = str(self.hub.get_seq_num())
             if len(self.controllers) > 0:
                 controller = self.controllers[attempts%len(self.controllers)]
@@ -450,7 +450,7 @@ class CyncRoom:
                 controller = self.default_controller
             self.hub.turn_off(controller, self.mesh_id, seq)
             self.hub.pending_commands[seq] = self.command_received
-            await asyncio.sleep(self._command_timout)
+            await asyncio.sleep(self._command_timeout)
             if self.hub.pending_commands.get(seq, None) is not None:
                 self.hub.pending_commands.pop(seq)
                 attempts += 1
@@ -532,7 +532,7 @@ class CyncSwitch:
         self.plug = switch_info.get('PLUG',False)
         self.fan = switch_info.get('FAN',False)
         self.elements = switch_info.get('MULTIELEMENT',1)
-        self._command_timout = 0.5
+        self._command_timeout = 0.5
         self._command_retry_time = 5
 
     def register(self, update_callback) -> None:
@@ -560,7 +560,7 @@ class CyncSwitch:
         """Turn on the light."""
         attempts = 0
         update_received = False
-        while not update_received and attempts < int(self._command_retry_time/self._command_timout):
+        while not update_received and attempts < int(self._command_retry_time/self._command_timeout):
             seq = str(self.hub.get_seq_num())
             if len(self.controllers) > 0:
                 controller = self.controllers[attempts%len(self.controllers)]
@@ -586,7 +586,7 @@ class CyncSwitch:
             else:
                 self.hub.turn_on(controller, self.mesh_id, seq)
             self.hub.pending_commands[seq] = self.command_received
-            await asyncio.sleep(self._command_timout)
+            await asyncio.sleep(self._command_timeout)
             if self.hub.pending_commands.get(seq, None) is not None:
                 self.hub.pending_commands.pop(seq)
                 attempts += 1
@@ -597,7 +597,7 @@ class CyncSwitch:
         """Turn off the light."""
         attempts = 0
         update_received = False
-        while not update_received and attempts < int(self._command_retry_time/self._command_timout):
+        while not update_received and attempts < int(self._command_retry_time/self._command_timeout):
             seq = str(self.hub.get_seq_num())
             if len(self.controllers) > 0:
                 controller = self.controllers[attempts%len(self.controllers)]
@@ -605,7 +605,7 @@ class CyncSwitch:
                 controller = self.default_controller
             self.hub.turn_off(controller, self.mesh_id, seq)
             self.hub.pending_commands[seq] = self.command_received
-            await asyncio.sleep(self._command_timout)
+            await asyncio.sleep(self._command_timeout)
             if self.hub.pending_commands.get(seq, None) is not None:
                 self.hub.pending_commands.pop(seq)
                 attempts += 1
