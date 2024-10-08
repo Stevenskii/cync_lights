@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Optional
+from typing import Optional
 
 from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
@@ -10,8 +10,8 @@ from homeassistant.components.binary_sensor import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity import DeviceInfo
 
 from .const import DOMAIN
 from .cync_hub import CyncHub, CyncMotionSensor, CyncAmbientLightSensor
@@ -64,9 +64,7 @@ class CyncMotionSensorEntity(BinarySensorEntity):
             identifiers={(DOMAIN, self.motion_sensor.device_id)},
             manufacturer="Cync by Savant",
             name=f"{self.motion_sensor.name} ({self.motion_sensor.home_name})",
-            suggested_area=self.motion_sensor.room.name
-            if self.motion_sensor.room
-            else None,
+            suggested_area=self.motion_sensor.room.name if self.motion_sensor.room else None,
         )
 
     async def async_added_to_hass(self) -> None:
