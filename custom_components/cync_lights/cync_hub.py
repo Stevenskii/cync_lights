@@ -43,7 +43,6 @@ class CyncHub:
         self.switchID_to_homeID = user_data['cync_config']['switchID_to_homeID']
         self.connected_devices = {home_id:[] for home_id in self.home_controllers.keys()}
         self.shutting_down = False
-        self.remove_options_update_listener = remove_options_update_listener
         self.cync_rooms = {room_id:CyncRoom(room_id,room_info,self) for room_id,room_info in user_data['cync_config']['rooms'].items()}
         self.cync_switches = {device_id:CyncSwitch(device_id,switch_info,self.cync_rooms.get(switch_info['room'], None),self) for device_id,switch_info in user_data['cync_config']['devices'].items() if switch_info.get("ONOFF",False)}
         self.cync_motion_sensors = {device_id:CyncMotionSensor(device_id,device_info,self.cync_rooms.get(device_info['room'], None)) for device_id,device_info in user_data['cync_config']['devices'].items() if device_info.get("MOTION",False)}
