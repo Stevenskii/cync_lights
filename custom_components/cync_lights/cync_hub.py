@@ -758,7 +758,7 @@ class CyncUserData:
     def _generate_login_code(self) -> None:
         """Generate the login code from user credentials."""
         authorize = self.user_credentials['authorize']
-        user_id = int(self.user_credentials['user_id'])
+        user_id = int(self.user_credentials.get('user_id') or self.user_credentials.get('user'))
         login_code = (
             bytes.fromhex('13000000')
             + (10 + len(authorize)).to_bytes(1, 'big')
@@ -929,9 +929,10 @@ class CyncUserData:
     async def _get_homes(self) -> List[Dict[str, Any]]:
         """Get a list of homes for a particular user."""
         headers = {'Access-Token': self.user_credentials['access_token']}
+        user_id = self.user_credentials.get('user_id') or self.user_credentials.get('user')
         async with aiohttp.ClientSession() as session:
             async with session.get(
-                API_DEVICES.format(user_id=self.user_credentials['user_id']),
+                API_DEVICES.format(user=user_id),
                 headers=headers
             ) as resp:
                 if resp.status == 200:
