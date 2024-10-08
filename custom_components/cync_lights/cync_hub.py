@@ -289,7 +289,7 @@ class CyncHub:
         for dev in self.cync_switches.values():
             dev.publish_update()
         for room in self.cync_rooms.values():
-            dev.publish_update()
+            room.publish_update()
 
     def send_request(self,request):
         async def send():
