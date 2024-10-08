@@ -184,8 +184,8 @@ class CyncSwitchEntity(LightEntity):
         self.cync_switch = cync_switch
 
     async def async_added_to_hass(self) -> None:
-    """Run when this Entity has been added to HA."""
-    self.cync_switch.register(self.async_write_ha_state, self.hass)
+        """Run when this Entity has been added to HA."""
+        self.cync_switch.register(self.async_write_ha_state, self.hass)
 
     async def async_will_remove_from_hass(self) -> None:
         """Entity being removed from hass."""
