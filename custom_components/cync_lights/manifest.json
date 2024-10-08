@@ -1,15 +1,15 @@
 {
   "domain": "cync_lights",
   "name": "Cync Lights",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "config_flow": true,
-  "documentation": "https://github.com/nikshriv/cync_lights",
+  "documentation": "https://github.com/Stevenskii/cync_lights",
   "ssdp": [],
   "zeroconf": [],
   "homekit": {},
   "dependencies": [],
   "codeowners": [
-    "@nikshriv"
+    "@Stevenskii"
   ],
   "iot_class": "local_push"
 }
