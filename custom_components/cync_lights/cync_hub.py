@@ -378,9 +378,9 @@ class CyncRoom:
             self.hub.cync_rooms[subgroup].all_room_switches = self.all_room_switches
 
     def register(self, update_callback, hass) -> None:
-		"""Register callback, called when switch changes state."""
-		self._update_callback = update_callback
-		self._hass = hass
+        """Register callback, called when switch changes state."""
+        self._update_callback = update_callback
+        self._hass = hass
 
     def reset(self) -> None:
         """Remove previously registered callback."""
@@ -488,9 +488,9 @@ class CyncRoom:
             self.rgb = _rgb
             self.publish_update()
             if self._update_callback:
-				self._hass.add_job(self._update_callback)
-			if self._update_parent_room:
-				self._hass.add_job(self._update_parent_room)
+                self._hass.add_job(self._update_callback)
+            if self._update_parent_room:
+                self._hass.add_job(self._update_parent_room)
 
     def publish_update(self):
         if self._update_callback:
@@ -511,8 +511,8 @@ class CyncRoom:
             self.controllers = [self.default_controller]
 
     def publish_update(self):
-		if self._update_callback:
-			self._hass.add_job(self._update_callback)
+        if self._update_callback:
+            self._hass.add_job(self._update_callback)
 
 
 class CyncSwitch:
@@ -544,9 +544,9 @@ class CyncSwitch:
         self._command_retry_time = 5
 
     def register(self, update_callback, hass) -> None:
-		"""Register callback, called when switch changes state."""
-		self._update_callback = update_callback
-		self._hass = hass
+        """Register callback, called when switch changes state."""
+        self._update_callback = update_callback
+        self._hass = hass
 
     def reset(self) -> None:
         """Remove previously registered callback."""
@@ -654,9 +654,9 @@ class CyncSwitch:
             self.rgb = rgb
             self.publish_update()
             if self._update_callback:
-				self._hass.add_job(self._update_callback)
-			if self._update_parent_room:
-				self._hass.add_job(self._update_parent_room)
+                self._hass.add_job(self._update_callback)
+            if self._update_parent_room:
+                self._hass.add_job(self._update_parent_room)
 
     def update_controllers(self):
         """Update the list of responsive, Wi-Fi connected controller devices"""
@@ -678,8 +678,8 @@ class CyncSwitch:
             self.controllers = [self.default_controller]
 
     def publish_update(self):
-		if self._update_callback:
-			self._hass.add_job(self._update_callback)
+        if self._update_callback:
+            self._hass.add_job(self._update_callback)
 
 class CyncMotionSensor:
 
@@ -695,7 +695,7 @@ class CyncMotionSensor:
     def register(self, update_callback) -> None:
         """Register callback, called when switch changes state."""
         self._update_callback = update_callback
-		self._hass = hass
+        self._hass = hass
 
     def reset(self) -> None:
         """Remove previously registered callback."""
@@ -706,8 +706,8 @@ class CyncMotionSensor:
         self.publish_update()
 
     def publish_update(self):
-		if self._update_callback:
-			self._hass.add_job(self._update_callback)
+        if self._update_callback:
+            self._hass.add_job(self._update_callback)
 
 class CyncAmbientLightSensor:
 
@@ -723,7 +723,7 @@ class CyncAmbientLightSensor:
     def register(self, update_callback) -> None:
         """Register callback, called when switch changes state."""
         self._update_callback = update_callback
-		self._hass = hass
+        self._hass = hass
 
     def reset(self) -> None:
         """Remove previously registered callback."""
@@ -735,7 +735,7 @@ class CyncAmbientLightSensor:
 
     def publish_update(self):
         if self._update_callback:
-			self._hass.add_job(self._update_callback)
+            self._hass.add_job(self._update_callback)
 
 class CyncUserData:
     """Class to handle user authentication and data retrieval."""
