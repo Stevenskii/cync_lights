@@ -144,7 +144,7 @@ class CyncHub:
                                 state = int(packet[27]) > 0
                                 brightness = int(packet[28]) if state else 0
                                 if deviceID in self.cync_switches:
-                                    self.cync_switches[deviceID].update_switch(state,brightness,self.cync_switches[deviceID].color_temp,self.cync_switches[deviceID].rgb)
+                                    self.cync_switches[deviceID].update_switch(state,brightness,self.cync_switches[deviceID].color_temp_kelvin,self.cync_switches[deviceID].rgb)
                             elif packet_length >= 25 and int(packet[13]) == 84:
                                 #parse motion and ambient light sensor packet
                                 deviceID = self.home_devices[home_id][int(packet[16])]
@@ -168,7 +168,7 @@ class CyncHub:
                                                 device_id = self.home_devices[home_id][(i+1)*256 + int(packet[0])]
                                                 state = int((int(packet[12]) >> i) & int(packet[8])) > 0
                                                 brightness = 100 if state else 0
-                                                self.cync_switches[device_id].update_switch(state, brightness, self.cync_switches[device_id].color_temp, self.cync_switches[device_id].rgb)
+                                                self.cync_switches[device_id].update_switch(state, brightness, self.cync_switches[device_id].color_temp_kelvin, self.cync_switches[device_id].rgb)
                                         else:
                                             state = int(packet[8]) > 0
                                             brightness = int(packet[12]) if state else 0
@@ -185,7 +185,7 @@ class CyncHub:
                                 state = int(packet[27]) > 0
                                 brightness = int(packet[28]) if state else 0
                                 if deviceID in self.cync_switches:
-                                    self.cync_switches[deviceID].update_switch(state,brightness,self.cync_switches[deviceID].color_temp,self.cync_switches[deviceID].rgb)
+                                    self.cync_switches[deviceID].update_switch(state,brightness,self.cync_switches[deviceID].color_temp_kelvin,self.cync_switches[deviceID].rgb)
                             elif packet_length >= 25 and int(packet[13]) == 84:
                                 #parse motion and ambient light sensor packet
                                 deviceID = self.home_devices[home_id][int(packet[16])]
@@ -209,7 +209,7 @@ class CyncHub:
                                                 device_id = self.home_devices[home_id][(i+1)*256 + int(packet[3])]
                                                 state = int((int(packet[5]) >> i) & int(packet[4])) > 0
                                                 brightness = 100 if state else 0
-                                                self.cync_switches[device_id].update_switch(state, brightness, self.cync_switches[device_id].color_temp, self.cync_switches[device_id].rgb)
+                                                self.cync_switches[device_id].update_switch(state, brightness, self.cync_switches[device_id].color_temp_kelvin, self.cync_switches[device_id].rgb)
                                         else:
                                             state = int(packet[4]) > 0
                                             brightness = int(packet[5]) if state else 0
