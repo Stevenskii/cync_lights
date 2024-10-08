@@ -54,7 +54,7 @@ class CyncHub:
         self.pending_commands = {}
         [room.initialize() for room in self.cync_rooms.values() if room.is_subgroup]
         [room.initialize() for room in self.cync_rooms.values() if not room.is_subgroup]
-        
+
     def start_tcp_client(self):
         self.thread = threading.Thread(target=self._start_tcp_client,daemon=True)
         self.thread.start()
@@ -104,7 +104,7 @@ class CyncHub:
                         except Exception as e:
                             _LOGGER.error(str(type(e).__name__) + ": " + str(e))
                     for task in pending:
-                        task.cancel()                    
+                        task.cancel()
                     if not self.shutting_down:
                         _LOGGER.error("Connection to Cync server reset, restarting in 15 seconds")
                         await asyncio.sleep(15)
@@ -248,7 +248,7 @@ class CyncHub:
                     for dev in self.cync_switches.values():
                         dev.update_controllers()
                     for room in self.cync_rooms.values():
-                        room.update_controllers() 
+                        room.update_controllers()
 
     async def _update_connected_devices(self):
         while not self.shutting_down:
@@ -266,7 +266,7 @@ class CyncHub:
                         self.loop.call_soon_threadsafe(self.send_request, ping)
                         await asyncio.sleep(0.15)
                 await asyncio.sleep(2)
-                attempts += 1            
+                attempts += 1
             for dev in self.cync_switches.values():
                 dev.update_controllers()
             for room in self.cync_rooms.values():
@@ -290,13 +290,13 @@ class CyncHub:
             dev.publish_update()
         for room in self.cync_rooms.values():
             dev.publish_update()
-            
+
     def send_request(self,request):
         async def send():
             self.writer.write(request)
             await self.writer.drain()
         self.loop.create_task(send())
-        
+
     def combo_control(self,state,brightness,color_tone,rgb,switch_id,mesh_id,seq):
         combo_request = bytes.fromhex('7300000022') + int(switch_id).to_bytes(4,'big') + int(seq).to_bytes(2,'big') + bytes.fromhex('007e00000000f8f010000000000000') + mesh_id + bytes.fromhex('f00000') + (1 if state else 0).to_bytes(1,'big')  + brightness.to_bytes(1,'big') + color_tone.to_bytes(1,'big') + rgb[0].to_bytes(1,'big') + rgb[1].to_bytes(1,'big') + rgb[2].to_bytes(1,'big') + ((496 + int(mesh_id[0]) + int(mesh_id[1]) + (1 if state else 0) + brightness + color_tone + sum(rgb))%256).to_bytes(1,'big') + bytes.fromhex('7e')
         self.loop.call_soon_threadsafe(self.send_request,combo_request)
@@ -365,7 +365,7 @@ class CyncRoom:
         self.switches_support_rgb = [device_id for device_id in self.switches if self.hub.cync_switches[device_id].support_rgb]
         self.groups_support_brightness = [room_id for room_id in self.subgroups if self.hub.cync_rooms[room_id].support_brightness]
         self.groups_support_color_temp = [room_id for room_id in self.subgroups if self.hub.cync_rooms[room_id].support_color_temp]
-        self.groups_support_rgb = [room_id for room_id in self.subgroups if self.hub.cync_rooms[room_id].support_rgb] 
+        self.groups_support_rgb = [room_id for room_id in self.subgroups if self.hub.cync_rooms[room_id].support_rgb]
         self.support_brightness = (len(self.switches_support_brightness) + len(self.groups_support_brightness)) > 0
         self.support_color_temp = (len(self.switches_support_color_temp) + len(self.groups_support_color_temp)) > 0
         self.support_rgb = (len(self.switches_support_rgb) + len(self.groups_support_rgb)) > 0
@@ -388,7 +388,7 @@ class CyncRoom:
     def register_room_updater(self, parent_updater):
         self._update_parent_room = parent_updater
 
-   @property
+    @property
     def max_color_temp_kelvin(self) -> int:
         """Return maximum supported color temperature in Kelvin."""
         return 7000  # Adjust according to your devices' specifications
@@ -479,7 +479,7 @@ class CyncRoom:
             _rgb['g'] = round(sum([self.hub.cync_switches[device_id].rgb['g'] for device_id in self.switches_support_rgb] + [self.hub.cync_rooms[room_id].rgb['g'] for room_id in self.groups_support_rgb])/(len(self.switches_support_rgb) + len(self.groups_support_rgb)))
             _rgb['b'] = round(sum([self.hub.cync_switches[device_id].rgb['b'] for device_id in self.switches_support_rgb] + [self.hub.cync_rooms[room_id].rgb['b'] for room_id in self.groups_support_rgb])/(len(self.switches_support_rgb) + len(self.groups_support_rgb)))
             _rgb['active'] = True in ([self.hub.cync_switches[device_id].rgb['active'] for device_id in self.switches_support_rgb] + [self.hub.cync_rooms[room_id].rgb['active'] for room_id in self.groups_support_rgb])
-        
+
         if _power_state != self.power_state or _brightness != self.brightness or _color_temp != self.color_temp_kelvin or _rgb != self.rgb:
             self.power_state = _power_state
             self.brightness = _brightness
@@ -646,7 +646,7 @@ class CyncSwitch:
         controllers = []
         if len(connected_devices) > 0:
             if int(self.switch_id) > 0:
-                if self.device_id in connected_devices: 
+                if self.device_id in connected_devices:
                     #if this device is connected, make this the first available controller
                     controllers.append(self.switch_id)
             if self.room:
@@ -666,7 +666,7 @@ class CyncSwitch:
 class CyncMotionSensor:
 
     def __init__(self, device_id, device_info, room):
-        
+
         self.device_id = device_id
         self.name = device_info['name']
         self.home_name = device_info['home_name']
@@ -693,7 +693,7 @@ class CyncMotionSensor:
 class CyncAmbientLightSensor:
 
     def __init__(self, device_id, device_info, room):
-        
+
         self.device_id = device_id
         self.name = device_info['name']
         self.home_name = device_info['home_name']
