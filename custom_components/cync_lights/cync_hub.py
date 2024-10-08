@@ -30,7 +30,7 @@ Capabilities = {
 
 class CyncHub:
 
-    def __init__(self, user_data, options, remove_options_update_listener):
+    def __init__(self, user_data, options):
 
         self.thread = None
         self.loop = None
