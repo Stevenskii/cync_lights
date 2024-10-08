@@ -5,7 +5,7 @@ import struct
 import aiohttp
 import math
 import ssl
-from typing import Any
+from typing import Any, Dict, List, Optional
 
 _LOGGER = logging.getLogger(__name__)
 
