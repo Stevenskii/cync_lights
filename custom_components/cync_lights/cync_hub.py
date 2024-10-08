@@ -546,7 +546,7 @@ class CyncSwitch:
     def register_room_updater(self, parent_updater):
         self._update_parent_room = parent_updater
 
-   @property
+    @property
     def max_color_temp_kelvin(self) -> int:
         """Return maximum supported color temperature in Kelvin."""
         return 7000  # Adjust according to your devices' specifications
