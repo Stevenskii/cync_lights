@@ -2,71 +2,71 @@
   "config": {
     "step": {
       "user": {
-        "title": "Cync User Credentials",
-        "description": "Please enter your Cync account credentials",
         "data": {
           "username": "Username",
           "password": "Password"
-        }
+        },
+        "title": "Cync User Credentials",
+        "description": "Please enter your Cync account credentials"
       },
       "two_factor_code": {
-        "title": "Cync Two-Factor Authentication",
-        "description": "Please check your email and enter the two-factor code",
         "data": {
-          "two_factor_code": "Two-Factor Code"
-        }
+          "two_factor_code":"Two Factor Code"
+        },
+        "title": "Cync Two Factor Authentication",
+        "description": "Please check your email and enter the two factor code"
       },
       "select_switches": {
-        "title": "Select Devices to Add",
-        "description": "Please select the rooms, groups, switches/bulbs, motion sensors, and ambient light sensors that you would like to add to Home Assistant",
-        "data": {
-          "rooms": "Rooms [room (home)]",
-          "subgroups": "Groups [group (room:home)]",
-          "switches": "Switches [switch/bulb (room:home)]",
-          "motion_sensors": "Motion Sensors [sensor (room:home)]",
-          "ambient_light_sensors": "Ambient Light Sensors [sensor (room:home)]"
+        "title": "Select Rooms, Groups, Switches, Motion Sensors, and Ambient Light Sensors",
+        "description": "Please select the rooms, groups, individual switches/bulbs, motion sensors, and ambient light sensors that you would like to add to Home Assistant",
+        "data":{
+          "rooms":"Rooms [room (home)]",
+          "subgroups":"Groups [group (room:home)]",
+          "switches":"Switches [switch/bulb (room:home)]",
+          "motion_sensors":"Motion Sensors [sensor (room:home)]",
+          "ambient_light_sensors":"Ambient Light Sensors [sensor (room:home)]]"
         }
       }
     },
     "error": {
-      "invalid_auth": "Invalid Cync user credentials or two-factor code.",
-      "unknown": "Invalid or unsupported Cync configuration. Please ensure there is at least one Wi-Fi connected Cync device in your home(s)."
+      "invalid_auth": "Invalid Cync user credentials or two factor code",
+      "unknown": "Invalid or unsupported Cync configuration, please ensure there is at least one WiFi connected Cync device in your Home(s)"
     },
     "abort": {
-      "reauth_successful": "Reauthorization successful."
+      "reauth_successful": "Reauthorization successful"
     }
   },
   "options": {
     "step": {
       "init": {
         "title": "Reload Cync Configuration",
-        "description": "If you have added new devices to your Cync account, you can reauthorize to download your latest configuration.",
-        "data": {
-          "re_authenticate": "Reauthorize?"
+        "description": "In case you have added new devices to your Cync account, you can opt to reauthorize and download your latest configuration.",
+        "data":{
+          "re-authenticate":"Reauthorize?"
         }
       },
       "two_factor_code": {
-        "title": "Cync Two-Factor Authentication",
-        "description": "Please check your email and enter the two-factor code",
         "data": {
-          "two_factor_code": "Two-Factor Code"
-        }
+          "two_factor_code":"Two Factor Code"
+        },
+        "title": "Cync Two Factor Authentication",
+        "description": "Please check your email and enter the two factor code"
       },
       "select_switches": {
-        "title": "Select Devices to Add",
-        "description": "Please select the rooms, groups, switches/bulbs, motion sensors, and ambient light sensors that you would like to add to Home Assistant",
-        "data": {
-          "rooms": "Rooms [room (home)]",
-          "subgroups": "Groups [group (room:home)]",
-          "switches": "Switches [switch/bulb (room:home)]",
-          "motion_sensors": "Motion Sensors [sensor (room:home)]",
-          "ambient_light_sensors": "Ambient Light Sensors [sensor (room:home)]"
+        "title": "Select Rooms, Groups, Switches, Motion Sensors, and Ambient Light Sensors",
+        "description": "Please select the rooms, groups, individual switches/bulbs, motion sensors, and ambient light sensors that you would like to add to Home Assistant",
+        "data":{
+          "rooms":"Rooms [room (home)]",
+          "subgroups":"Groups [group (room:home)]",
+          "switches":"Switches [switch/bulb (room:home)]",
+          "motion_sensors":"Motion Sensors [sensor (room:home)]",
+          "ambient_light_sensors":"Ambient Light Sensors [sensor (room:home)]]"
         }
       }
     },
     "error": {
-      "invalid_auth": "Invalid Cync user credentials or two-factor code.",
-      "unknown": "Invalid or unsupported Cync configuration. Please ensure there is at least one Wi-Fi connected Cync device in your home(s)."
+      "invalid_auth": "Invalid Cync user credentials or two factor code",
+      "unknown": "Invalid or unsupported Cync configuration, please ensure there is at least one WiFi connected Cync device in your Home(s)"
     }
   }
 }
