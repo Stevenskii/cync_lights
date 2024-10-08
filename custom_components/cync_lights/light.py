@@ -1,34 +1,56 @@
 """Platform for light integration."""
+
 from __future__ import annotations
-from typing import Any
-from homeassistant.components.light import (ATTR_BRIGHTNESS, ATTR_COLOR_TEMP_KELVIN, ATTR_RGB_COLOR, ColorMode, LightEntity)
-from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.entity import DeviceInfo
-from .const import DOMAIN
+
+from typing import Any, Tuple
+
 import logging
 
+from homeassistant.components.light import (
+    ATTR_BRIGHTNESS,
+    ATTR_COLOR_TEMP_KELVIN,
+    ATTR_RGB_COLOR,
+    ColorMode,
+    LightEntity,
+)
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
+
+from .const import DOMAIN
+
 _LOGGER = logging.getLogger(__name__)
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
     config_entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback
+    async_add_entities: AddEntitiesCallback,
 ) -> None:
+    """Set up Cync light entities from a config entry."""
     hub = hass.data[DOMAIN][config_entry.entry_id]
 
     new_devices = []
-    config_rooms = "rooms" in config_entry.options and config_entry.options["rooms"] or {}
-    config_subgroups = "subgroups" in config_entry.options and config_entry.options["subgroups"] or {}
-    for room in hub.cync_rooms:
-        if not hub.cync_rooms[room]._update_callback and (room in config_rooms or room in config_subgroups):
-            new_devices.append(CyncRoomEntity(hub.cync_rooms[room]))
 
+    config_rooms = config_entry.options.get("rooms", {})
+    config_subgroups = config_entry.options.get("subgroups", {})
+    config_switches = config_entry.options.get("switches", {})
 
-    for switch_id in hub.cync_switches:
-        if not hub.cync_switches[switch_id]._update_callback and not hub.cync_switches[switch_id].plug and not hub.cync_switches[switch_id].fan and switch_id in config_entry.options["switches"]:
-            new_devices.append(CyncSwitchEntity(hub.cync_switches[switch_id]))
+    for room_name, room in hub.cync_rooms.items():
+        if not room._update_callback and (
+            room_name in config_rooms or room_name in config_subgroups
+        ):
+            new_devices.append(CyncRoomEntity(room))
+
+    for switch_id, cync_switch in hub.cync_switches.items():
+        if (
+            not cync_switch._update_callback
+            and not cync_switch.plug
+            and not cync_switch.fan
+            and switch_id in config_switches
+        ):
+            new_devices.append(CyncSwitchEntity(cync_switch))
 
     if new_devices:
         async_add_entities(new_devices)
@@ -37,7 +59,7 @@ async def async_setup_entry(
 class CyncRoomEntity(LightEntity):
     """Representation of a Cync Room Light Entity."""
 
-    should_poll = False
+    _attr_should_poll = False
 
     def __init__(self, room) -> None:
         """Initialize the light."""
@@ -45,7 +67,7 @@ class CyncRoomEntity(LightEntity):
 
     async def async_added_to_hass(self) -> None:
         """Run when this Entity has been added to HA."""
-        self.room.register(self.schedule_update_ha_state)
+        self.room.register(self.async_write_ha_state)
 
     async def async_will_remove_from_hass(self) -> None:
         """Entity being removed from hass."""
@@ -54,25 +76,25 @@ class CyncRoomEntity(LightEntity):
     @property
     def device_info(self) -> DeviceInfo:
         """Return device registry information for this entity."""
+        room_name = self.room.parent_room if self.room.is_subgroup else self.room.name
         return DeviceInfo(
-            identifiers = {(DOMAIN, f"{self.room.parent_room if self.room.is_subgroup else self.room.name} ({self.room.home_name})")},
-            manufacturer = "Cync by Savant",
-            name = f"{self.room.parent_room if self.room.is_subgroup else self.room.name} ({self.room.home_name})",
-            suggested_area = f"{self.room.parent_room if self.room.is_subgroup else self.room.name}",
+            identifiers={(DOMAIN, f"{room_name} ({self.room.home_name})")},
+            manufacturer="Cync by Savant",
+            name=f"{room_name} ({self.room.home_name})",
+            suggested_area=room_name,
         )
 
     @property
     def icon(self) -> str | None:
         """Icon of the entity."""
-        if self.room.is_subgroup:
-            return "mdi:lightbulb-group-outline"
-        else:
-            return "mdi:lightbulb-group"
+        return "mdi:lightbulb-group-outline" if self.room.is_subgroup else "mdi:lightbulb-group"
 
     @property
     def unique_id(self) -> str:
         """Return Unique ID string."""
-        uid =  'cync_room_' + '-'.join(self.room.switches) + '_' + '-'.join(self.room.subgroups)
+        switches_ids = '-'.join(sorted(self.room.switches))
+        subgroups_ids = '-'.join(sorted(self.room.subgroups))
+        uid = f"cync_room_{switches_ids}_{subgroups_ids}"
         return uid
 
     @property
@@ -81,14 +103,16 @@ class CyncRoomEntity(LightEntity):
         return self.room.name
 
     @property
-    def is_on(self) -> bool | None:
+    def is_on(self) -> bool:
         """Return true if light is on."""
         return self.room.power_state
 
     @property
     def brightness(self) -> int | None:
         """Return the brightness of this room between 0..255."""
-        return round(self.room.brightness*255/100)
+        if self.room.brightness is not None:
+            return round(self.room.brightness * 255 / 100)
+        return None
 
     @property
     def max_color_temp_kelvin(self) -> int:
@@ -101,21 +125,22 @@ class CyncRoomEntity(LightEntity):
         return self.room.min_color_temp_kelvin
 
     @property
-    def color_temp_kelvin(self) -> int:
+    def color_temp_kelvin(self) -> int | None:
         """Return color temperature in kelvin."""
         return self.room.color_temp_kelvin
 
     @property
-    def rgb_color(self) -> tuple[int, int, int] | None:
-        """Return the RGB color tuple of this light switch"""
-        return (self.room.rgb['r'],self.room.rgb['g'],self.room.rgb['b'])
+    def rgb_color(self) -> Tuple[int, int, int] | None:
+        """Return the RGB color tuple of this light."""
+        rgb = self.room.rgb
+        if rgb:
+            return (rgb['r'], rgb['g'], rgb['b'])
+        return None
 
     @property
-    def supported_color_modes(self) -> set[str] | None:
-        """Return list of available color modes."""
-
-        modes: set[ColorMode | str] = set()
-
+    def supported_color_modes(self) -> set[ColorMode]:
+        """Return set of supported color modes."""
+        modes = set()
         if self.room.support_color_temp:
             modes.add(ColorMode.COLOR_TEMP)
         if self.room.support_rgb:
@@ -124,35 +149,35 @@ class CyncRoomEntity(LightEntity):
             modes.add(ColorMode.BRIGHTNESS)
         if not modes:
             modes.add(ColorMode.ONOFF)
-
         return modes
 
     @property
-    def color_mode(self) -> str | None:
+    def color_mode(self) -> ColorMode:
         """Return the active color mode."""
-
+        if self.room.support_rgb and self.room.rgb.get('active'):
+            return ColorMode.RGB
         if self.room.support_color_temp:
-            if self.room.support_rgb and self.room.rgb['active']:
-                return ColorMode.RGB
-            else:
-                return ColorMode.COLOR_TEMP
+            return ColorMode.COLOR_TEMP
         if self.room.support_brightness:
             return ColorMode.BRIGHTNESS
-        else:
-            return ColorMode.ONOFF
+        return ColorMode.ONOFF
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn on the light."""
-        await self.room.turn_on(kwargs.get(ATTR_RGB_COLOR),kwargs.get(ATTR_BRIGHTNESS),kwargs.get(ATTR_COLOR_TEMP_KELVIN))
+        rgb_color = kwargs.get(ATTR_RGB_COLOR)
+        brightness = kwargs.get(ATTR_BRIGHTNESS)
+        color_temp_kelvin = kwargs.get(ATTR_COLOR_TEMP_KELVIN)
+        await self.room.turn_on(rgb_color, brightness, color_temp_kelvin)
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn off the light."""
         await self.room.turn_off()
 
+
 class CyncSwitchEntity(LightEntity):
     """Representation of a Cync Switch Light Entity."""
 
-    should_poll = False
+    _attr_should_poll = False
 
     def __init__(self, cync_switch) -> None:
         """Initialize the light."""
@@ -160,7 +185,7 @@ class CyncSwitchEntity(LightEntity):
 
     async def async_added_to_hass(self) -> None:
         """Run when this Entity has been added to HA."""
-        self.cync_switch.register(self.schedule_update_ha_state)
+        self.cync_switch.register(self.async_write_ha_state)
 
     async def async_will_remove_from_hass(self) -> None:
         """Entity being removed from hass."""
@@ -170,16 +195,16 @@ class CyncSwitchEntity(LightEntity):
     def device_info(self) -> DeviceInfo:
         """Return device registry information for this entity."""
         return DeviceInfo(
-            identifiers = {(DOMAIN, f"{self.cync_switch.room.name} ({self.cync_switch.home_name})")},
-            manufacturer = "Cync by Savant",
-            name = f"{self.cync_switch.room.name} ({self.cync_switch.home_name})",
-            suggested_area = f"{self.cync_switch.room.name}",
+            identifiers={(DOMAIN, f"{self.cync_switch.room.name} ({self.cync_switch.home_name})")},
+            manufacturer="Cync by Savant",
+            name=f"{self.cync_switch.room.name} ({self.cync_switch.home_name})",
+            suggested_area=self.cync_switch.room.name,
         )
 
     @property
     def unique_id(self) -> str:
         """Return Unique ID string."""
-        return 'cync_switch_' + self.cync_switch.device_id
+        return f'cync_switch_{self.cync_switch.device_id}'
 
     @property
     def name(self) -> str:
@@ -187,14 +212,16 @@ class CyncSwitchEntity(LightEntity):
         return self.cync_switch.name
 
     @property
-    def is_on(self) -> bool | None:
+    def is_on(self) -> bool:
         """Return true if light is on."""
         return self.cync_switch.power_state
 
     @property
     def brightness(self) -> int | None:
         """Return the brightness of this switch between 0..255."""
-        return round(self.cync_switch.brightness*255/100)
+        if self.cync_switch.brightness is not None:
+            return round(self.cync_switch.brightness * 255 / 100)
+        return None
 
     @property
     def max_color_temp_kelvin(self) -> int:
@@ -212,16 +239,17 @@ class CyncSwitchEntity(LightEntity):
         return self.cync_switch.color_temp_kelvin
 
     @property
-    def rgb_color(self) -> tuple[int, int, int] | None:
-        """Return the RGB color tuple of this light switch"""
-        return (self.cync_switch.rgb['r'],self.cync_switch.rgb['g'],self.cync_switch.rgb['b'])
+    def rgb_color(self) -> Tuple[int, int, int] | None:
+        """Return the RGB color tuple of this light switch."""
+        rgb = self.cync_switch.rgb
+        if rgb:
+            return (rgb['r'], rgb['g'], rgb['b'])
+        return None
 
     @property
-    def supported_color_modes(self) -> set[str] | None:
-        """Return list of available color modes."""
-
-        modes: set[ColorMode | str] = set()
-
+    def supported_color_modes(self) -> set[ColorMode]:
+        """Return set of supported color modes."""
+        modes = set()
         if self.cync_switch.support_color_temp:
             modes.add(ColorMode.COLOR_TEMP)
         if self.cync_switch.support_rgb:
@@ -230,26 +258,25 @@ class CyncSwitchEntity(LightEntity):
             modes.add(ColorMode.BRIGHTNESS)
         if not modes:
             modes.add(ColorMode.ONOFF)
-
         return modes
 
     @property
-    def color_mode(self) -> str | None:
+    def color_mode(self) -> ColorMode:
         """Return the active color mode."""
-
+        if self.cync_switch.support_rgb and self.cync_switch.rgb.get('active'):
+            return ColorMode.RGB
         if self.cync_switch.support_color_temp:
-            if self.cync_switch.support_rgb and self.cync_switch.rgb['active']:
-                return ColorMode.RGB
-            else:
-                return ColorMode.COLOR_TEMP
+            return ColorMode.COLOR_TEMP
         if self.cync_switch.support_brightness:
             return ColorMode.BRIGHTNESS
-        else:
-            return ColorMode.ONOFF
+        return ColorMode.ONOFF
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn on the light."""
-        await self.cync_switch.turn_on(kwargs.get(ATTR_RGB_COLOR),kwargs.get(ATTR_BRIGHTNESS),kwargs.get(ATTR_COLOR_TEMP_KELVIN))
+        rgb_color = kwargs.get(ATTR_RGB_COLOR)
+        brightness = kwargs.get(ATTR_BRIGHTNESS)
+        color_temp_kelvin = kwargs.get(ATTR_COLOR_TEMP_KELVIN)
+        await self.cync_switch.turn_on(rgb_color, brightness, color_temp_kelvin)
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn off the light."""
