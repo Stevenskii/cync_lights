@@ -7,8 +7,8 @@ from typing import Any
 from homeassistant.components.switch import SwitchDeviceClass, SwitchEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity import DeviceInfo
 
 from .const import DOMAIN
 from .cync_hub import CyncHub, CyncSwitch
@@ -46,7 +46,7 @@ class CyncPlugEntity(SwitchEntity):
     def __init__(self, cync_switch: CyncSwitch) -> None:
         """Initialize the plug switch entity."""
         self.cync_switch = cync_switch
-        self._attr_unique_id = f"cync_switch_{self.cync_switch.device_id}"
+        self._attr_unique_id = f"cync_plug_{self.cync_switch.device_id}"
         self._attr_name = self.cync_switch.name
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, self.cync_switch.device_id)},
