@@ -377,9 +377,10 @@ class CyncRoom:
         for subgroup in self.subgroups:
             self.hub.cync_rooms[subgroup].all_room_switches = self.all_room_switches
 
-    def register(self, update_callback) -> None:
-        """Register callback, called when switch changes state."""
-        self._update_callback = update_callback
+    def register(self, update_callback, hass) -> None:
+		"""Register callback, called when switch changes state."""
+		self._update_callback = update_callback
+		self._hass = hass
 
     def reset(self) -> None:
         """Remove previously registered callback."""
@@ -504,8 +505,9 @@ class CyncRoom:
             self.controllers = [self.default_controller]
 
     def publish_update(self):
-        if self._update_callback:
-            self._update_callback()
+		if self._update_callback:
+			self._hass.add_job(self._update_callback)
+
 
 class CyncSwitch:
 
