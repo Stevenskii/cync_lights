@@ -5,7 +5,6 @@ import struct
 import aiohttp
 import math
 import ssl
-import pprint
 from typing import Any, Dict, List, Optional
 
 _LOGGER = logging.getLogger(__name__)
@@ -929,7 +928,7 @@ class CyncUserData:
             current_index = ((device['deviceID'] % int(home_id)) % 1000) + ((device['deviceID'] % int(home_id)) // 1000) * 256
             home_devices[home_id][current_index] = device_id
 
-            # Add the following debug logging line
+            # Add debug logging
             _LOGGER.debug(f"Processing device ID {device_id}, deviceType {device_type}, device info: {device}")
 
             devices[device_id] = {
@@ -1010,6 +1009,40 @@ class CyncUserData:
                     else:
                         _LOGGER.warning("Subgroup %s not found. Removing from room %s.", subgroup_id, room_id)
                         room_info["subgroups"].remove(subgroup_id)
+
+    async def _get_homes(self) -> List[Dict[str, Any]]:
+        """Get a list of homes for a particular user."""
+        headers = {'Access-Token': self.user_credentials['access_token']}
+        user_id = self.user_credentials.get('user_id') or self.user_credentials.get('user')
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                API_DEVICES.format(user=user_id),
+                headers=headers
+            ) as resp:
+                if resp.status == 200:
+                    response = await resp.json()
+                    return response
+                else:
+                    _LOGGER.error("Failed to get homes with status code: %s", resp.status)
+                    return []
+
+    async def _get_home_properties(self, product_id: int, device_id: str) -> Optional[Dict[str, Any]]:
+        """Get properties for a single home."""
+        headers = {'Access-Token': self.user_credentials['access_token']}
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                API_DEVICE_INFO.format(product_id=product_id, device_id=device_id),
+                headers=headers
+            ) as resp:
+                if resp.status == 200:
+                    response = await resp.json()
+                    return response
+                else:
+                    _LOGGER.error(
+                        "Failed to get properties for home %s with status code: %s",
+                        device_id, resp.status
+                    )
+                    return None
 
 class LostConnection(Exception):
     """Lost connection to Cync Server"""
