@@ -990,23 +990,25 @@ class CyncUserData:
                     _LOGGER.error("Failed to get homes with status code: %s", resp.status)
                     return []
 
-    async def _get_home_properties(self, product_id: int, device_id: str) -> Optional[Dict[str, Any]]:
-        """Get properties for a single home."""
-        headers = {'Access-Token': self.user_credentials['access_token']}
-        async with aiohttp.ClientSession() as session:
-            async with session.get(
-                API_DEVICE_INFO.format(product_id=product_id, device_id=device_id),
-                headers=headers
-            ) as resp:
-                if resp.status == 200:
-                    response = await resp.json()
-                    return response
-                else:
-                    _LOGGER.error(
-                        "Failed to get properties for home %s with status code: %s",
-                        device_id, resp.status
-                    )
-                    return None
+async def _get_home_properties(self, product_id: int, device_id: str) -> Optional[Dict[str, Any]]:
+    """Get properties for a single home."""
+    headers = {'Access-Token': self.user_credentials['access_token']}
+    async with aiohttp.ClientSession() as session:
+        async with session.get(
+            API_DEVICE_INFO.format(product_id=product_id, device_id=device_id),
+            headers=headers
+        ) as resp:
+            if resp.status == 200:
+                response = await resp.json()
+                # Add the following debug logging line
+                _LOGGER.debug(f"Home properties for device_id {device_id}: {response}")
+                return response
+            else:
+                _LOGGER.error(
+                    "Failed to get properties for home %s with status code: %s",
+                    device_id, resp.status
+                )
+                return None
 
 class LostConnection(Exception):
     """Lost connection to Cync Server"""
