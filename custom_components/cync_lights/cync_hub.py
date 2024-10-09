@@ -892,9 +892,9 @@ class CyncUserData:
         for device in bulbs_array:
             device_type = device['deviceType']
             device_id = str(device['deviceID'])
-            _LOGGER.debug(f"Processing device ID {device_id}, deviceType {device_type}")
             current_index = ((device['deviceID'] % int(home_id)) % 1000) + ((device['deviceID'] % int(home_id)) // 1000) * 256
             home_devices[home_id][current_index] = device_id
+            _LOGGER.debug(f"Processing device ID {device_id}, deviceType {device_type}")
             devices[device_id] = {
                 'name': device.get('displayName', 'Unknown'),
                 'mesh_id': current_index,
