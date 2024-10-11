@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Tuple, Optional
+from typing import Any, Tuple
 
 import logging
 
@@ -206,17 +206,12 @@ class CyncRoomEntity(LightEntity):
     @property
     def effect(self) -> str | None:
         """Return the current effect."""
-        if hasattr(self.room, 'current_effect'):
-            return self.room.current_effect or None
-        return None
+        return getattr(self.room, 'current_effect', None)
 
     @property
     def extra_state_attributes(self) -> dict[str, Any] | None:
         """Return the optional state attributes."""
-        attributes = {
-            "color_temp_kelvin": self.color_temp_kelvin,
-        }
-        return attributes
+        return {"color_temp_kelvin": self.color_temp_kelvin}
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn on the light."""
@@ -310,11 +305,7 @@ class CyncSwitchEntity(LightEntity):
     @property
     def device_info(self) -> DeviceInfo:
         """Return device registry information for this entity."""
-        if self.cync_switch.room:
-            room_name = self.cync_switch.room.name
-        else:
-            room_name = "Unknown Room"
-
+        room_name = self.cync_switch.room.name if self.cync_switch.room else "Unknown Room"
         return DeviceInfo(
             identifiers={(DOMAIN, self.cync_switch.device_id)},
             manufacturer="Cync by Savant",
@@ -388,17 +379,12 @@ class CyncSwitchEntity(LightEntity):
     @property
     def effect(self) -> str | None:
         """Return the current effect."""
-        if hasattr(self.cync_switch, 'current_effect'):
-            return self.cync_switch.current_effect or None
-        return None
+        return getattr(self.cync_switch, 'current_effect', None)
 
     @property
     def extra_state_attributes(self) -> dict[str, Any] | None:
         """Return the optional state attributes."""
-        attributes = {
-            "color_temp_kelvin": self.color_temp_kelvin,
-        }
-        return attributes
+        return {"color_temp_kelvin": self.color_temp_kelvin}
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn on the light."""
