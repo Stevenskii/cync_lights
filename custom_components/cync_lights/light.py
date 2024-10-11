@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Tuple
+from typing import Any, Tuple, Optional
 
 import logging
 
@@ -18,7 +18,6 @@ from homeassistant.components.light import (
     LightEntity,
     LightEntityDescription,
     LightEntityFeature,
-    FLASH_SHORT,
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -222,6 +221,7 @@ class CyncRoomEntity(LightEntity):
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn on the light."""
+        _LOGGER.debug("Turning on light: %s with kwargs: %s", self.name, kwargs)
         brightness = kwargs.get(ATTR_BRIGHTNESS)
         color_temp_kelvin = kwargs.get(ATTR_COLOR_TEMP_KELVIN)
         rgb_color = kwargs.get(ATTR_RGB_COLOR)
@@ -238,14 +238,23 @@ class CyncRoomEntity(LightEntity):
         if effect == "None":
             effect = None
 
-        await self.room.turn_on(
-            brightness=brightness,
-            color_temp_kelvin=color_temp_kelvin,
-            rgb_color=rgb_color,
-            effect=effect,
-            flash=flash,
-            transition=transition,
+        _LOGGER.debug(
+            "Calling self.room.turn_on with parameters: brightness=%s, "
+            "color_temp_kelvin=%s, rgb_color=%s, effect=%s, flash=%s, transition=%s",
+            brightness, color_temp_kelvin, rgb_color, effect, flash, transition,
         )
+
+        try:
+            await self.room.turn_on(
+                brightness=brightness,
+                color_temp_kelvin=color_temp_kelvin,
+                rgb_color=rgb_color,
+                effect=effect,
+                flash=flash,
+                transition=transition,
+            )
+        except Exception as e:
+            _LOGGER.error("Error turning on light %s: %s", self.name, e)
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn off the light."""
