@@ -296,11 +296,10 @@ class CyncSwitchEntity(LightEntity):
     @property
     def device_info(self) -> DeviceInfo:
         """Return device registry information for this entity."""
-        room_name = self.room.parent_room if self.room.is_subgroup else self.room.name
         return DeviceInfo(
-            identifiers={(DOMAIN, room_name)},
+            identifiers = {(DOMAIN, f"{self.cync_switch.room.name} ({self.cync_switch.home_name})")},
             manufacturer="Cync by Savant",
-            name=room_name,
+            name = f"{self.cync_switch.room.name} ({self.cync_switch.home_name})",
             suggested_area=room_name,
         )
 
