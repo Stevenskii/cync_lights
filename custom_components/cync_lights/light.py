@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Tuple, List
+from typing import Any, Tuple, List, Optional
 
 import logging
 import asyncio  # Ensure asyncio is imported
@@ -19,7 +19,6 @@ from homeassistant.components.light import (
     LightEntity,
     LightEntityFeature,
 )
-from homeassistant.helpers.entity_group import async_create_group  # Correct import
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity import DeviceInfo
@@ -57,7 +56,8 @@ async def async_setup_entry(
 
     # Handle group creation or updating for each room
     for room_name, room in hub.cync_rooms.items():
-        group_entity_id = f"group.cync_{room.room_id}"
+        group_object_id = f"cync_{room.room_id}"  # Avoid prefixing with 'group.' here
+        group_entity_id = f"group.{group_object_id}"
         group_name = f"{room.name} Lights"
 
         # Get all switch entity IDs in the room
@@ -70,36 +70,40 @@ async def async_setup_entry(
         if not switch_entity_ids:
             continue  # No switches in this room
 
-        # Check if the group already exists
-        group_state = hass.states.get(group_entity_id)
-        if group_state:
-            # Group exists, get existing members
-            existing_entities = group_state.attributes.get("entity_id", [])
-            # Merge with new switch entities, avoiding duplicates
-            updated_entities = list(set(existing_entities + switch_entity_ids))
-            # Update the group with the new entities
-            try:
-                await async_create_group(
-                    hass,
-                    group_entity_id,
-                    group_name,
-                    updated_entities,
+        # Prepare data for group.set service
+        group_data = {
+            "object_id": group_object_id,
+            "name": group_name,
+            "entities": switch_entity_ids,
+        }
+
+        try:
+            # Check if the group already exists
+            group_state = hass.states.get(group_entity_id)
+            if group_state:
+                # Update existing group
+                existing_entities = group_state.attributes.get("entity_id", [])
+                # Merge with new switch entities, avoiding duplicates
+                updated_entities = list(set(existing_entities + switch_entity_ids))
+                group_data["entities"] = updated_entities
+                await hass.services.async_call(
+                    "group",
+                    "set",
+                    group_data,
+                    blocking=True,
                 )
                 _LOGGER.info(f"Updated group '{group_name}' with switches: {switch_entity_ids}")
-            except Exception as e:
-                _LOGGER.error(f"Failed to update group '{group_name}': {e}")
-        else:
-            # Group does not exist, create it
-            try:
-                await async_create_group(
-                    hass,
-                    group_entity_id,
-                    group_name,
-                    switch_entity_ids,
+            else:
+                # Create new group
+                await hass.services.async_call(
+                    "group",
+                    "set",
+                    group_data,
+                    blocking=True,
                 )
                 _LOGGER.info(f"Created group '{group_name}' with switches: {switch_entity_ids}")
-            except Exception as e:
-                _LOGGER.error(f"Failed to create group '{group_name}': {e}")
+        except Exception as e:
+            _LOGGER.error(f"Failed to create/update group '{group_name}': {e}")
 
 
 class CyncSwitchEntity(LightEntity):
@@ -185,7 +189,11 @@ class CyncSwitchEntity(LightEntity):
     def color_temp(self) -> int | None:
         """Return color temperature in mireds."""
         if self.cync_switch.color_temp_kelvin is not None and self.cync_switch.color_temp_kelvin > 0:
-            return int(1000000 / self.cync_switch.color_temp_kelvin)
+            try:
+                return int(1000000 / self.cync_switch.color_temp_kelvin)
+            except ZeroDivisionError:
+                _LOGGER.error("Color temperature Kelvin value is zero, cannot convert to mireds.")
+                return None
         return None
 
     @property
