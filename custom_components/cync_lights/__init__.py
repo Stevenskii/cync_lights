@@ -7,6 +7,9 @@ from homeassistant.core import HomeAssistant
 from .const import DOMAIN
 from .cync_hub import CyncHub
 
+# Import platforms at module level to avoid blocking calls during event loop
+from . import light, binary_sensor, switch, fan
+
 PLATFORMS: list[str] = ["light", "binary_sensor", "switch", "fan"]
 
 
@@ -17,7 +20,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data[DOMAIN][entry.entry_id] = hub
     hub.start_tcp_client()
 
-    await hass.config_entries.async_setup_platforms(entry, PLATFORMS)
+    # Forward the entry setups without causing a blocking call
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
     return True
 
 
