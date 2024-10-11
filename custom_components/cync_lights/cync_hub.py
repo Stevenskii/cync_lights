@@ -917,14 +917,284 @@ class CyncAmbientLightSensor:
         if self._update_callback:
             self._hass.add_job(self._update_callback)
 
+class CyncUserData:
+    """Class to handle user authentication and data retrieval."""
+
+    def __init__(self) -> None:
+        """Initialize the user data."""
+        self.username: str = ''
+        self.password: str = ''
+        self.auth_code: Optional[List[int]] = None
+        self.user_credentials: Dict[str, Any] = {}
+        self.cync_config: Dict[str, Any] = {}
+
+    async def authenticate(self, username: str, password: str) -> Dict[str, Any]:
+        """Authenticate with the API and get a token."""
+        self.username = username
+        self.password = password
+        auth_data = {
+            'corp_id': "1007d2ad150c4000",
+            'email': self.username,
+            'password': self.password
+        }
+        async with aiohttp.ClientSession() as session:
+            async with session.post(API_AUTH, json=auth_data) as resp:
+                if resp.status == 200:
+                    self.user_credentials = await resp.json()
+                    self._generate_login_code()
+                    return {'authorized': True}
+                elif resp.status == 400:
+                    return await self._request_two_factor_code(session)
+                else:
+                    _LOGGER.error("Authentication failed with status code: %s", resp.status)
+                    return {'authorized': False, 'two_factor_code_required': False}
+
+    async def _request_two_factor_code(self, session: aiohttp.ClientSession) -> Dict[str, Any]:
+        """Request two-factor code."""
+        request_code_data = {
+            'corp_id': "1007d2ad150c4000",
+            'email': self.username,
+            'local_lang': "en-us"
+        }
+        async with session.post(API_REQUEST_CODE, json=request_code_data) as resp:
+            if resp.status == 200:
+                return {'authorized': False, 'two_factor_code_required': True}
+            else:
+                _LOGGER.error("Two-factor code request failed with status code: %s", resp.status)
+                return {'authorized': False, 'two_factor_code_required': False}
+
+    async def auth_two_factor(self, code: str) -> Dict[str, Any]:
+        """Authenticate with two-factor code."""
+        two_factor_data = {
+            'corp_id': "1007d2ad150c4000",
+            'email': self.username,
+            'password': self.password,
+            'two_factor': code,
+            'resource': "abcdefghijklmnop"
+        }
+        async with aiohttp.ClientSession() as session:
+            async with session.post(API_2FACTOR_AUTH, json=two_factor_data) as resp:
+                if resp.status == 200:
+                    self.user_credentials = await resp.json()
+                    self._generate_login_code()
+                    return {'authorized': True}
+                else:
+                    _LOGGER.error("Two-factor authentication failed with status code: %s", resp.status)
+                    return {'authorized': False}
+
+    def _generate_login_code(self) -> None:
+        """Generate the login code from user credentials."""
+        authorize = self.user_credentials['authorize']
+        user_id = int(self.user_credentials.get('user_id') or self.user_credentials.get('user'))
+        login_code = (
+            bytes.fromhex('13000000')
+            + (10 + len(authorize)).to_bytes(1, 'big')
+            + bytes.fromhex('03')
+            + user_id.to_bytes(4, 'big')
+            + len(authorize).to_bytes(2, 'big')
+            + authorize.encode('ascii')
+            + bytes.fromhex('0000b4')
+        )
+        self.auth_code = list(login_code)
+
+    async def get_cync_config(self) -> Dict[str, Any]:
+        """Retrieve the Cync configuration."""
+        home_devices: Dict[str, List[str]] = {}
+        home_controllers: Dict[str, List[str]] = {}
+        switchID_to_homeID: Dict[str, str] = {}
+        devices: Dict[str, Any] = {}
+        rooms: Dict[str, Any] = {}
+        homes = await self._get_homes()
+        if not homes:
+            _LOGGER.error("No homes found for user.")
+            raise InvalidCyncConfiguration("No homes found for user.")
+
+        for home in homes:
+            home_id = str(home['id'])
+            product_id = home['product_id']
+            home_info = await self._get_home_properties(product_id, home_id)
+            if not home_info:
+                continue
+
+            if (
+                'groupsArray' in home_info
+                and 'bulbsArray' in home_info
+                and home_info['groupsArray']
+                and home_info['bulbsArray']
+            ):
+                try:
+                    await self._process_home_info(
+                        home_id,
+                        home,
+                        home_info,
+                        home_devices,
+                        home_controllers,
+                        switchID_to_homeID,
+                        devices,
+                        rooms
+                    )
+                except Exception as e:
+                    _LOGGER.error("Error processing home info: %s", e)
+                    continue
+
+        if not rooms or not devices or not home_controllers or not home_devices or not switchID_to_homeID:
+            _LOGGER.error("Invalid Cync configuration detected.")
+            raise InvalidCyncConfiguration("Invalid Cync configuration detected.")
+
+        self.cync_config = {
+            'rooms': rooms,
+            'devices': devices,
+            'home_devices': home_devices,
+            'home_controllers': home_controllers,
+            'switchID_to_homeID': switchID_to_homeID
+        }
+        return self.cync_config
+
+    async def _get_homes(self) -> List[Dict[str, Any]]:
+        """Get a list of homes for a particular user."""
+        headers = {'Access-Token': self.user_credentials['access_token']}
+        user_id = self.user_credentials.get('user_id') or self.user_credentials.get('user')
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                API_DEVICES.format(user=user_id),
+                headers=headers
+            ) as resp:
+                if resp.status == 200:
+                    response = await resp.json()
+                    return response
+                else:
+                    _LOGGER.error("Failed to get homes with status code: %s", resp.status)
+                    return []
+
+    async def _get_home_properties(self, product_id: int, device_id: str) -> Optional[Dict[str, Any]]:
+        """Get properties for a single home."""
+        headers = {'Access-Token': self.user_credentials['access_token']}
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                API_DEVICE_INFO.format(product_id=product_id, device_id=device_id),
+                headers=headers
+            ) as resp:
+                if resp.status == 200:
+                    response = await resp.json()
+                    return response
+                else:
+                    _LOGGER.error(
+                        "Failed to get properties for home %s with status code: %s",
+                        device_id, resp.status
+                    )
+                    return None
+
+    async def _process_home_info(
+        self,
+        home_id: str,
+        home: Dict[str, Any],
+        home_info: Dict[str, Any],
+        home_devices: Dict[str, List[str]],
+        home_controllers: Dict[str, List[str]],
+        switchID_to_homeID: Dict[str, str],
+        devices: Dict[str, Any],
+        rooms: Dict[str, Any]
+    ) -> None:
+        """Process home information and populate devices and rooms."""
+        bulbs_array = home_info['bulbsArray']
+        groups_array = home_info['groupsArray']
+        max_index = max(
+            ((device['deviceID'] % int(home_id)) % 1000) + ((device['deviceID'] % int(home_id)) // 1000) * 256
+            for device in bulbs_array
+        ) + 1
+        home_devices[home_id] = [""] * max_index
+        home_controllers[home_id] = []
+        for device in bulbs_array:
+            device_type = device['deviceType']
+            device_id = str(device['deviceID'])
+            current_index = ((device['deviceID'] % int(home_id)) % 1000) + ((device['deviceID'] % int(home_id)) // 1000) * 256
+            home_devices[home_id][current_index] = device_id
+
+            devices[device_id] = {
+                'name': device.get('displayName', 'Unknown'),
+                'mesh_id': current_index,
+                'switch_id': str(device.get('switchID', 0)),
+                'ONOFF': device_type in Capabilities['ONOFF'],
+                'BRIGHTNESS': device_type in Capabilities["BRIGHTNESS"],
+                "COLORTEMP": device_type in Capabilities["COLORTEMP"],
+                "RGB": device_type in Capabilities["RGB"],
+                "MOTION": device_type in Capabilities["MOTION"],
+                "AMBIENT_LIGHT": device_type in Capabilities["AMBIENT_LIGHT"],
+                "WIFICONTROL": device_type in Capabilities["WIFICONTROL"],
+                "PLUG": device_type in Capabilities["PLUG"],
+                "FAN": device_type in Capabilities["FAN"],
+                'home_name': home.get('name', 'Unknown'),
+                'room': '',
+                'room_name': ''
+            }
+            if str(device_type) in Capabilities['MULTIELEMENT'] and current_index < 256:
+                devices[device_id]['MULTIELEMENT'] = Capabilities['MULTIELEMENT'][str(device_type)]
+            if devices[device_id].get('WIFICONTROL', False) and device.get('switchID', 0) > 0:
+                switch_id_str = str(device['switchID'])
+                switchID_to_homeID[switch_id_str] = home_id
+                devices[device_id]['switch_controller'] = switch_id_str
+                if switch_id_str not in home_controllers[home_id]:
+                    home_controllers[home_id].append(switch_id_str)
+        if not home_controllers[home_id]:
+            _LOGGER.warning("No controllers found in home %s. Skipping home.", home_id)
+            # Remove devices from this home
+            for device in bulbs_array:
+                device_id = str(device['deviceID'])
+                devices.pop(device_id, None)
+            home_devices.pop(home_id, None)
+            home_controllers.pop(home_id, None)
+            return
+
+        for room in groups_array:
+            if room.get('deviceIDArray') or room.get('subgroupIDArray'):
+                room_id = f"{home_id}-{room['groupID']}"
+                room_controller = home_controllers[home_id][0]
+                device_ids = room.get('deviceIDArray', [])
+                available_controllers = [
+                    devices[home_devices[home_id][(dev_id % int(home_id)) % 1000 + ((dev_id % int(home_id)) // 1000) * 256]]['switch_controller']
+                    for dev_id in device_ids
+                    if 'switch_controller' in devices[home_devices[home_id][(dev_id % int(home_id)) % 1000 + ((dev_id % int(home_id)) // 1000) * 256]]
+                ]
+                if available_controllers:
+                    room_controller = available_controllers[0]
+                for dev_id in device_ids:
+                    index = (dev_id % int(home_id)) % 1000 + ((dev_id % int(home_id)) // 1000) * 256
+                    device = devices[home_devices[home_id][index]]
+                    device['room'] = room_id
+                    device['room_name'] = room.get('displayName', 'Unknown')
+                    if 'switch_controller' not in device and device.get('ONOFF', False):
+                        device['switch_controller'] = room_controller
+                rooms[room_id] = {
+                    'name': room.get('displayName', 'Unknown'),
+                    'mesh_id': room['groupID'],
+                    'room_controller': room_controller,
+                    'home_name': home.get('name', 'Unknown'),
+                    'switches': [
+                        home_devices[home_id][(dev_id % int(home_id)) % 1000 + ((dev_id % int(home_id)) // 1000) * 256]
+                        for dev_id in device_ids
+                        if devices[home_devices[home_id][(dev_id % int(home_id)) % 1000 + ((dev_id % int(home_id)) // 1000) * 256]].get('ONOFF', False)
+                    ],
+                    'isSubgroup': room.get('isSubgroup', False),
+                    'subgroups': [
+                        f"{home_id}-{subgroup_id}" for subgroup_id in room.get('subgroupIDArray', [])
+                    ]
+                }
+        # Update parent rooms for subgroups
+        for room_id, room_info in rooms.items():
+            if not room_info.get("isSubgroup", False) and room_info.get("subgroups"):
+                for subgroup_id in room_info["subgroups"].copy():
+                    subgroup = rooms.get(subgroup_id)
+                    if subgroup:
+                        subgroup["parent_room"] = room_info["name"]
+                    else:
+                        _LOGGER.warning("Subgroup %s not found. Removing from room %s.", subgroup_id, room_id)
+                        room_info["subgroups"].remove(subgroup_id)
 
 class LostConnection(Exception):
     """Lost connection to Cync Server"""
 
-
 class ShuttingDown(Exception):
     """Cync client shutting down"""
-
 
 class InvalidCyncConfiguration(Exception):
     """Cync configuration is not supported"""
