@@ -300,7 +300,7 @@ class CyncSwitchEntity(LightEntity):
         return DeviceInfo(
             identifiers = {(DOMAIN, f"{self.cync_switch.room.name} ({self.cync_switch.home_name})")},
             manufacturer="Cync by Savant",
-            name = f"{self.cync_switch.room.name} ({self.cync_switch.home_name})",
+            name = f"{self.cync_switch.room.name}",
             suggested_area=room_name,
         )
 
