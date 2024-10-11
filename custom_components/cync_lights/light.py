@@ -16,7 +16,6 @@ from homeassistant.components.light import (
     ATTR_TRANSITION,
     ColorMode,
     LightEntity,
-    LightEntityDescription,
     LightEntityFeature,
 )
 from homeassistant.config_entries import ConfigEntry
@@ -64,10 +63,6 @@ async def async_setup_entry(
 
 class CyncRoomEntity(LightEntity):
     """Representation of a Cync Room Light Entity."""
-
-    entity_description = LightEntityDescription(
-        key="cync_light", has_entity_name=True, name=None
-    )
 
     def __init__(self, room) -> None:
         """Initialize the light."""
@@ -253,10 +248,6 @@ class CyncRoomEntity(LightEntity):
 
 class CyncSwitchEntity(LightEntity):
     """Representation of a Cync Switch (Bulb) Light Entity."""
-
-    entity_description = LightEntityDescription(
-        key="cync_switch_light", has_entity_name=True, name=None
-    )
 
     def __init__(self, cync_switch) -> None:
         """Initialize the light."""
