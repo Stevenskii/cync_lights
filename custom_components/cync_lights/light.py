@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, Tuple, List
 
 import logging
+import asyncio  # Ensure asyncio is imported
 
 from homeassistant.components.light import (
     ATTR_BRIGHTNESS,
@@ -18,7 +19,7 @@ from homeassistant.components.light import (
     LightEntity,
     LightEntityFeature,
 )
-from homeassistant.components.group import DOMAIN as GROUP_DOMAIN  # Removed SERVICE_CREATE and SERVICE_SET
+from homeassistant.components.group import async_create_group  # Correct import
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity import DeviceInfo
@@ -78,15 +79,11 @@ async def async_setup_entry(
             updated_entities = list(set(existing_entities + switch_entity_ids))
             # Update the group with the new entities
             try:
-                await hass.services.async_call(
-                    GROUP_DOMAIN,
-                    'set',  # Use string literal instead of SERVICE_SET
-                    {
-                        "object_id": group_entity_id.split(".")[1],
-                        "name": group_name,
-                        "entities": updated_entities,
-                    },
-                    blocking=True,
+                await async_create_group(
+                    hass,
+                    group_entity_id,
+                    group_name,
+                    updated_entities,
                 )
                 _LOGGER.info(f"Updated group '{group_name}' with switches: {switch_entity_ids}")
             except Exception as e:
@@ -94,15 +91,11 @@ async def async_setup_entry(
         else:
             # Group does not exist, create it
             try:
-                await hass.services.async_call(
-                    GROUP_DOMAIN,
-                    'create',  # Use string literal instead of SERVICE_CREATE
-                    {
-                        "object_id": group_entity_id.split(".")[1],
-                        "name": group_name,
-                        "entities": switch_entity_ids,
-                    },
-                    blocking=True,
+                await async_create_group(
+                    hass,
+                    group_entity_id,
+                    group_name,
+                    switch_entity_ids,
                 )
                 _LOGGER.info(f"Created group '{group_name}' with switches: {switch_entity_ids}")
             except Exception as e:
@@ -191,7 +184,7 @@ class CyncSwitchEntity(LightEntity):
     @property
     def color_temp(self) -> int | None:
         """Return color temperature in mireds."""
-        if self.cync_switch.color_temp_kelvin is not None:
+        if self.cync_switch.color_temp_kelvin is not None and self.cync_switch.color_temp_kelvin > 0:
             return int(1000000 / self.cync_switch.color_temp_kelvin)
         return None
 
@@ -218,7 +211,7 @@ class CyncSwitchEntity(LightEntity):
         """Return the active color mode."""
         if self.cync_switch.support_rgb and self.cync_switch.rgb.get('active'):
             return ColorMode.RGB
-        if self.cync_switch.support_color_temp and self.cync_switch.color_temp_kelvin is not None:
+        if self.cync_switch.support_color_temp and self.cync_switch.color_temp_kelvin:
             return ColorMode.COLOR_TEMP
         if ColorMode.BRIGHTNESS in self.supported_color_modes:
             return ColorMode.BRIGHTNESS
