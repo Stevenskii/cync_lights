@@ -66,7 +66,6 @@ async def async_setup_entry(
 class CyncRoomEntity(LightEntity):
     """Representation of a Cync Room Light Entity."""
 
-    _fixed_color_mode: ColorMode | None = None
     entity_description = LightEntityDescription(
         key="cync_light", has_entity_name=True, name=None
     )
@@ -81,19 +80,16 @@ class CyncRoomEntity(LightEntity):
 
         # Determine supported color modes based on capabilities
         supported_color_modes = set()
-        if self.room.support_rgb:
-            supported_color_modes.add(ColorMode.RGB)
-        if self.room.support_color_temp:
-            supported_color_modes.add(ColorMode.COLOR_TEMP)
-        if self.room.support_brightness:
-            supported_color_modes.add(ColorMode.BRIGHTNESS)
-            self._attr_supported_features |= LightEntityFeature.TRANSITION
+        if self.room.support_rgb and self.room.support_color_temp:
+            supported_color_modes = {ColorMode.RGB, ColorMode.COLOR_TEMP}
+        elif self.room.support_rgb:
+            supported_color_modes = {ColorMode.RGB}
+        elif self.room.support_color_temp:
+            supported_color_modes = {ColorMode.COLOR_TEMP}
+        elif self.room.support_brightness:
+            supported_color_modes = {ColorMode.BRIGHTNESS}
         else:
-            supported_color_modes.add(ColorMode.ONOFF)
-
-        # Set fixed color mode if only one mode is supported
-        if len(supported_color_modes) == 1:
-            self._fixed_color_mode = next(iter(supported_color_modes))
+            supported_color_modes = {ColorMode.ONOFF}
 
         self._attr_supported_color_modes = supported_color_modes
 
@@ -105,6 +101,10 @@ class CyncRoomEntity(LightEntity):
 
         # Add flash support
         self._attr_supported_features |= LightEntityFeature.FLASH
+
+        # Add transition support if brightness is supported
+        if self.room.support_brightness:
+            self._attr_supported_features |= LightEntityFeature.TRANSITION
 
     def _generate_unique_id(self) -> str:
         """Generate unique ID for the entity."""
@@ -164,6 +164,13 @@ class CyncRoomEntity(LightEntity):
         return None
 
     @property
+    def color_temp(self) -> int | None:
+        """Return color temperature in mireds."""
+        if self.room.color_temp_kelvin is not None:
+            return int(1000000 / self.room.color_temp_kelvin)
+        return None
+
+    @property
     def color_temp_kelvin(self) -> int | None:
         """Return color temperature in Kelvin."""
         return self.room.color_temp_kelvin
@@ -184,16 +191,11 @@ class CyncRoomEntity(LightEntity):
     @property
     def color_mode(self) -> ColorMode:
         """Return the active color mode."""
-        if self._fixed_color_mode:
-            # The light supports only a single color mode
-            return self._fixed_color_mode
-
-        # Determine the active color mode
         if self.room.support_rgb and self.room.rgb.get('active'):
             return ColorMode.RGB
         if self.room.support_color_temp and self.room.color_temp_kelvin is not None:
             return ColorMode.COLOR_TEMP
-        if self.room.support_brightness:
+        if ColorMode.BRIGHTNESS in self.supported_color_modes:
             return ColorMode.BRIGHTNESS
         return ColorMode.ONOFF
 
@@ -220,12 +222,14 @@ class CyncRoomEntity(LightEntity):
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn on the light."""
-        rgb_color = kwargs.get(ATTR_RGB_COLOR)
         brightness = kwargs.get(ATTR_BRIGHTNESS)
         color_temp_kelvin = kwargs.get(ATTR_COLOR_TEMP_KELVIN)
+        rgb_color = kwargs.get(ATTR_RGB_COLOR)
+
         if not color_temp_kelvin and ATTR_COLOR_TEMP in kwargs:
             # Convert mireds to Kelvin
             color_temp_kelvin = int(1000000 / kwargs[ATTR_COLOR_TEMP])
+
         effect = kwargs.get(ATTR_EFFECT)
         flash = kwargs.get(ATTR_FLASH)
         transition = kwargs.get(ATTR_TRANSITION)
@@ -235,9 +239,9 @@ class CyncRoomEntity(LightEntity):
             effect = None
 
         await self.room.turn_on(
-            rgb_color=rgb_color,
             brightness=brightness,
             color_temp_kelvin=color_temp_kelvin,
+            rgb_color=rgb_color,
             effect=effect,
             flash=flash,
             transition=transition,
@@ -253,7 +257,6 @@ class CyncRoomEntity(LightEntity):
 class CyncSwitchEntity(LightEntity):
     """Representation of a Cync Switch Light Entity."""
 
-    _fixed_color_mode: ColorMode | None = None
     entity_description = LightEntityDescription(
         key="cync_switch_light", has_entity_name=True, name=None
     )
@@ -268,19 +271,16 @@ class CyncSwitchEntity(LightEntity):
 
         # Determine supported color modes based on capabilities
         supported_color_modes = set()
-        if self.cync_switch.support_rgb:
-            supported_color_modes.add(ColorMode.RGB)
-        if self.cync_switch.support_color_temp:
-            supported_color_modes.add(ColorMode.COLOR_TEMP)
-        if self.cync_switch.support_brightness:
-            supported_color_modes.add(ColorMode.BRIGHTNESS)
-            self._attr_supported_features |= LightEntityFeature.TRANSITION
+        if self.cync_switch.support_rgb and self.cync_switch.support_color_temp:
+            supported_color_modes = {ColorMode.RGB, ColorMode.COLOR_TEMP}
+        elif self.cync_switch.support_rgb:
+            supported_color_modes = {ColorMode.RGB}
+        elif self.cync_switch.support_color_temp:
+            supported_color_modes = {ColorMode.COLOR_TEMP}
+        elif self.cync_switch.support_brightness:
+            supported_color_modes = {ColorMode.BRIGHTNESS}
         else:
-            supported_color_modes.add(ColorMode.ONOFF)
-
-        # Set fixed color mode if only one mode is supported
-        if len(supported_color_modes) == 1:
-            self._fixed_color_mode = next(iter(supported_color_modes))
+            supported_color_modes = {ColorMode.ONOFF}
 
         self._attr_supported_color_modes = supported_color_modes
 
@@ -292,6 +292,10 @@ class CyncSwitchEntity(LightEntity):
 
         # Add flash support
         self._attr_supported_features |= LightEntityFeature.FLASH
+
+        # Add transition support if brightness is supported
+        if self.cync_switch.support_brightness:
+            self._attr_supported_features |= LightEntityFeature.TRANSITION
 
     async def async_added_to_hass(self) -> None:
         """Run when this Entity has been added to HA."""
@@ -339,6 +343,13 @@ class CyncSwitchEntity(LightEntity):
         return None
 
     @property
+    def color_temp(self) -> int | None:
+        """Return color temperature in mireds."""
+        if self.cync_switch.color_temp_kelvin is not None:
+            return int(1000000 / self.cync_switch.color_temp_kelvin)
+        return None
+
+    @property
     def color_temp_kelvin(self) -> int | None:
         """Return the color temperature of this light in Kelvin."""
         return self.cync_switch.color_temp_kelvin
@@ -359,16 +370,11 @@ class CyncSwitchEntity(LightEntity):
     @property
     def color_mode(self) -> ColorMode:
         """Return the active color mode."""
-        if self._fixed_color_mode:
-            # The light supports only a single color mode
-            return self._fixed_color_mode
-
-        # Determine the active color mode
         if self.cync_switch.support_rgb and self.cync_switch.rgb.get('active'):
             return ColorMode.RGB
         if self.cync_switch.support_color_temp and self.cync_switch.color_temp_kelvin is not None:
             return ColorMode.COLOR_TEMP
-        if self.cync_switch.support_brightness:
+        if ColorMode.BRIGHTNESS in self.supported_color_modes:
             return ColorMode.BRIGHTNESS
         return ColorMode.ONOFF
 
@@ -395,12 +401,14 @@ class CyncSwitchEntity(LightEntity):
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn on the light."""
-        rgb_color = kwargs.get(ATTR_RGB_COLOR)
         brightness = kwargs.get(ATTR_BRIGHTNESS)
         color_temp_kelvin = kwargs.get(ATTR_COLOR_TEMP_KELVIN)
+        rgb_color = kwargs.get(ATTR_RGB_COLOR)
+
         if not color_temp_kelvin and ATTR_COLOR_TEMP in kwargs:
             # Convert mireds to Kelvin
             color_temp_kelvin = int(1000000 / kwargs[ATTR_COLOR_TEMP])
+
         effect = kwargs.get(ATTR_EFFECT)
         flash = kwargs.get(ATTR_FLASH)
         transition = kwargs.get(ATTR_TRANSITION)
@@ -410,9 +418,9 @@ class CyncSwitchEntity(LightEntity):
             effect = None
 
         await self.cync_switch.turn_on(
-            rgb_color=rgb_color,
             brightness=brightness,
             color_temp_kelvin=color_temp_kelvin,
+            rgb_color=rgb_color,
             effect=effect,
             flash=flash,
             transition=transition,
