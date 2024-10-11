@@ -18,6 +18,7 @@ from homeassistant.components.light import (
     LightEntity,
     LightEntityDescription,
     LightEntityFeature,
+    FLASH_SHORT,
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -75,10 +76,8 @@ class CyncRoomEntity(LightEntity):
         self._attr_name = self.room.name
         self._attr_unique_id = self._generate_unique_id()
         self._attr_should_poll = False
-
-        # Initialize supported features
-        self._attr_supported_features = LightEntityFeature(0)
-
+        self._attr_supported_features = LightEntityFeature(0)  # Initialize once here
+    
         # Determine supported color modes based on capabilities
         supported_color_modes = set()
         if self.room.support_rgb and self.room.support_color_temp:
@@ -91,21 +90,21 @@ class CyncRoomEntity(LightEntity):
             supported_color_modes = {ColorMode.BRIGHTNESS}
         else:
             supported_color_modes = {ColorMode.ONOFF}
-
+    
         self._attr_supported_color_modes = supported_color_modes
-
+    
+        # Handle effects if supported
+        self._attr_effect_list = []
+        if self.room.support_effects:
+            self._attr_effect_list = self.room.get_effect_list()
+            self._attr_supported_features |= LightEntityFeature.EFFECT
+    
         # Add flash support
         self._attr_supported_features |= LightEntityFeature.FLASH
-
+    
         # Add transition support if brightness is supported
         if self.room.support_brightness:
             self._attr_supported_features |= LightEntityFeature.TRANSITION
-
-        # Handle effects if supported
-        self._attr_effect_list = []
-        if hasattr(self.room, 'effects') and self.room.effects:
-            self._attr_effect_list = self.room.effects
-            self._attr_supported_features |= LightEntityFeature.EFFECT
 
     def _generate_unique_id(self) -> str:
         """Generate unique ID for the entity."""
@@ -268,8 +267,6 @@ class CyncSwitchEntity(LightEntity):
         self._attr_name = self.cync_switch.name
         self._attr_unique_id = f'cync_switch_{self.cync_switch.device_id}'
         self._attr_should_poll = False
-
-        # Initialize supported features
         self._attr_supported_features = LightEntityFeature(0)
 
         # Determine supported color modes based on capabilities
@@ -287,18 +284,18 @@ class CyncSwitchEntity(LightEntity):
 
         self._attr_supported_color_modes = supported_color_modes
 
+        # Handle effects if supported
+        self._attr_effect_list = []
+        if self.cync_switch.hub.effect_mapping:
+            self._attr_effect_list = list(self.cync_switch.hub.effect_mapping.keys())
+            self._attr_supported_features |= LightEntityFeature.EFFECT
+
         # Add flash support
         self._attr_supported_features |= LightEntityFeature.FLASH
 
         # Add transition support if brightness is supported
         if self.cync_switch.support_brightness:
             self._attr_supported_features |= LightEntityFeature.TRANSITION
-
-        # Handle effects if supported
-        self._attr_effect_list = []
-        if hasattr(self.cync_switch, 'effects') and self.cync_switch.effects:
-            self._attr_effect_list = self.cync_switch.effects
-            self._attr_supported_features |= LightEntityFeature.EFFECT
 
     async def async_added_to_hass(self) -> None:
         """Run when this Entity has been added to HA."""
@@ -404,30 +401,40 @@ class CyncSwitchEntity(LightEntity):
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn on the light."""
+        _LOGGER.debug("Turning on light: %s with kwargs: %s", self.name, kwargs)
         brightness = kwargs.get(ATTR_BRIGHTNESS)
         color_temp_kelvin = kwargs.get(ATTR_COLOR_TEMP_KELVIN)
         rgb_color = kwargs.get(ATTR_RGB_COLOR)
-
+    
         if not color_temp_kelvin and ATTR_COLOR_TEMP in kwargs:
             # Convert mireds to Kelvin
             color_temp_kelvin = int(1000000 / kwargs[ATTR_COLOR_TEMP])
-
+    
         effect = kwargs.get(ATTR_EFFECT)
         flash = kwargs.get(ATTR_FLASH)
         transition = kwargs.get(ATTR_TRANSITION)
-
+    
         # Handle effect "None" to stop any active effect
         if effect == "None":
             effect = None
-
-        await self.cync_switch.turn_on(
-            brightness=brightness,
-            color_temp_kelvin=color_temp_kelvin,
-            rgb_color=rgb_color,
-            effect=effect,
-            flash=flash,
-            transition=transition,
+    
+        _LOGGER.debug(
+            "Calling self.room.turn_on with parameters: brightness=%s, "
+            "color_temp_kelvin=%s, rgb_color=%s, effect=%s, flash=%s, transition=%s",
+            brightness, color_temp_kelvin, rgb_color, effect, flash, transition,
         )
+    
+        try:
+            await self.room.turn_on(
+                brightness=brightness,
+                color_temp_kelvin=color_temp_kelvin,
+                rgb_color=rgb_color,
+                effect=effect,
+                flash=flash,
+                transition=transition,
+            )
+        except Exception as e:
+            _LOGGER.error("Error turning on light %s: %s", self.name, e)
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn off the light."""
