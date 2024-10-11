@@ -62,7 +62,7 @@ async def async_setup_entry(
 
 
 class CyncRoomEntity(LightEntity):
-    """Representation of a Cync Room Entity"""
+    """Representation of a Cync Room Light Entity."""
 
     def __init__(self, room) -> None:
         """Initialize the light."""
@@ -118,8 +118,7 @@ class CyncRoomEntity(LightEntity):
     @property
     def device_info(self) -> DeviceInfo:
         """Return device registry information for this entity."""
-        return DeviceInfo(
-            room_name = self.room.parent_room if self.room.is_subgroup else self.room.name
+        room_name = self.room.parent_room if self.room.is_subgroup else self.room.name
         return DeviceInfo(
             identifiers={(DOMAIN, room_name)},
             manufacturer="Cync by Savant",
@@ -297,11 +296,11 @@ class CyncSwitchEntity(LightEntity):
     @property
     def device_info(self) -> DeviceInfo:
         """Return device registry information for this entity."""
-        room_name = self.cync_switch.room.name if self.cync_switch.room else "Unknown Room"
+        room_name = self.room.parent_room if self.room.is_subgroup else self.room.name
         return DeviceInfo(
-            identifiers={(DOMAIN, self.cync_switch.device_id)},
+            identifiers={(DOMAIN, room_name)},
             manufacturer="Cync by Savant",
-            name = f"{self.cync_switch.room.name} ({self.cync_switch.home_name})",
+            name=room_name,
             suggested_area=room_name,
         )
 
