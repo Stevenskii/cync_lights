@@ -208,14 +208,14 @@ class CyncOptionsFlowHandler(config_entries.OptionsFlow):
     ) -> FlowResult:
         """Manage the options."""
         if user_input is not None:
-            re_authenticate = user_input.get("re_authenticate") == "Yes"
-            if re_authenticate:
+            re_authenticated = user_input.get("re_authenticate") == "Yes"
+            if re_authenticated:
                 return await self.async_step_re_auth()
             return await self.async_step_select_switches()
 
         data_schema = vol.Schema(
             {
-                vol.Required('re_authenticate', default="No"): vol.In(["Yes", "No"]),
+                vol.Required("re_authenticate", default="No"): vol.In(["Yes", "No"]),
             }
         )
 
