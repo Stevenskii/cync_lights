@@ -54,57 +54,6 @@ async def async_setup_entry(
     if new_switches:
         async_add_entities(new_switches)
 
-    # Handle group creation or updating for each room
-    for room_name, room in hub.cync_rooms.items():
-        group_object_id = f"cync_{room.room_id}"  # Avoid prefixing with 'group.' here
-        group_entity_id = f"group.{group_object_id}"
-        group_name = f"{room.name} Lights"
-
-        # Get all switch entity IDs in the room
-        switch_entity_ids = [
-            f"light.cync_switch_{switch.device_id}"
-            for switch in hub.cync_switches.values()
-            if switch.device_id in room.switches
-        ]
-
-        if not switch_entity_ids:
-            continue  # No switches in this room
-
-        # Prepare data for group.set service
-        group_data = {
-            "object_id": group_object_id,
-            "name": group_name,
-            "entities": switch_entity_ids,
-        }
-
-        try:
-            # Check if the group already exists
-            group_state = hass.states.get(group_entity_id)
-            if group_state:
-                # Update existing group
-                existing_entities = group_state.attributes.get("entity_id", [])
-                # Merge with new switch entities, avoiding duplicates
-                updated_entities = list(set(existing_entities + switch_entity_ids))
-                group_data["entities"] = updated_entities
-                await hass.services.async_call(
-                    "group",
-                    "set",
-                    group_data,
-                    blocking=True,
-                )
-                _LOGGER.info(f"Updated group '{group_name}' with switches: {switch_entity_ids}")
-            else:
-                # Create new group
-                await hass.services.async_call(
-                    "group",
-                    "set",
-                    group_data,
-                    blocking=True,
-                )
-                _LOGGER.info(f"Created group '{group_name}' with switches: {switch_entity_ids}")
-        except Exception as e:
-            _LOGGER.error(f"Failed to create/update group '{group_name}': {e}")
-
 
 class CyncSwitchEntity(LightEntity):
     """Representation of a Cync Switch (Bulb) Light Entity."""
