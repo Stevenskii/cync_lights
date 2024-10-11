@@ -75,7 +75,7 @@ class CyncRoomEntity(LightEntity):
         self._attr_name = self.room.name
         self._attr_unique_id = self._generate_unique_id()
         self._attr_should_poll = False
-        self._attr_supported_features = LightEntityFeature(0)  # Initialize once here
+        self._attr_supported_features = LightEntityFeature(0)
 
         # Determine supported color modes based on capabilities
         supported_color_modes = set()
@@ -214,7 +214,6 @@ class CyncRoomEntity(LightEntity):
     def extra_state_attributes(self) -> dict[str, Any] | None:
         """Return the optional state attributes."""
         attributes = {
-            "room_mode": getattr(self.room, 'mode', None),
             "color_temp_kelvin": self.color_temp_kelvin,
         }
         return attributes
@@ -238,12 +237,6 @@ class CyncRoomEntity(LightEntity):
         if effect == "None":
             effect = None
 
-        _LOGGER.debug(
-            "Calling self.room.turn_on with parameters: brightness=%s, "
-            "color_temp_kelvin=%s, rgb_color=%s, effect=%s, flash=%s, transition=%s",
-            brightness, color_temp_kelvin, rgb_color, effect, flash, transition,
-        )
-
         try:
             await self.room.turn_on(
                 brightness=brightness,
@@ -264,7 +257,7 @@ class CyncRoomEntity(LightEntity):
 
 
 class CyncSwitchEntity(LightEntity):
-    """Representation of a Cync Switch Light Entity."""
+    """Representation of a Cync Switch (Bulb) Light Entity."""
 
     entity_description = LightEntityDescription(
         key="cync_switch_light", has_entity_name=True, name=None
@@ -323,9 +316,9 @@ class CyncSwitchEntity(LightEntity):
             room_name = "Unknown Room"
 
         return DeviceInfo(
-            identifiers={(DOMAIN, room_name)},
+            identifiers={(DOMAIN, self.cync_switch.device_id)},
             manufacturer="Cync by Savant",
-            name=room_name,
+            name=self.cync_switch.name,
             suggested_area=room_name,
         )
 
@@ -403,7 +396,6 @@ class CyncSwitchEntity(LightEntity):
     def extra_state_attributes(self) -> dict[str, Any] | None:
         """Return the optional state attributes."""
         attributes = {
-            "switch_mode": getattr(self.cync_switch, 'mode', None),
             "color_temp_kelvin": self.color_temp_kelvin,
         }
         return attributes
@@ -426,12 +418,6 @@ class CyncSwitchEntity(LightEntity):
         # Handle effect "None" to stop any active effect
         if effect == "None":
             effect = None
-
-        _LOGGER.debug(
-            "Calling self.cync_switch.turn_on with parameters: brightness=%s, "
-            "color_temp_kelvin=%s, rgb_color=%s, effect=%s, flash=%s, transition=%s",
-            brightness, color_temp_kelvin, rgb_color, effect, flash, transition,
-        )
 
         try:
             await self.cync_switch.turn_on(
