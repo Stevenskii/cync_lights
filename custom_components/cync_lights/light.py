@@ -102,9 +102,7 @@ class CyncRoomEntity(LightEntity):
 
     def _generate_unique_id(self) -> str:
         """Generate unique ID for the entity."""
-        switches_ids = '-'.join(sorted(self.room.switches))
-        subgroups_ids = '-'.join(sorted(self.room.subgroups))
-        uid = f"cync_room_{switches_ids}_{subgroups_ids}"
+        uid = f"cync_room_{self.room.room_id}"
         return uid
 
     async def async_added_to_hass(self) -> None:
@@ -118,12 +116,11 @@ class CyncRoomEntity(LightEntity):
     @property
     def device_info(self) -> DeviceInfo:
         """Return device registry information for this entity."""
-        room_name = self.room.parent_room if self.room.is_subgroup else self.room.name
         return DeviceInfo(
-            identifiers={(DOMAIN, room_name)},
+            identifiers={(DOMAIN, self.room.room_id)},
             manufacturer="Cync by Savant",
-            name=room_name,
-            suggested_area=room_name,
+            name=self.room_name,
+            suggested_area=self.room.parent_room if self.room.is_subgroup else self.room.name,
         )
 
     @property
@@ -296,12 +293,11 @@ class CyncSwitchEntity(LightEntity):
     @property
     def device_info(self) -> DeviceInfo:
         """Return device registry information for this entity."""
-        room_name = self.cync_switch.room.name if self.cync_switch.room else "Unknown Room"
         return DeviceInfo(
-            identifiers = {(DOMAIN, f"{self.cync_switch.room.name} ({self.cync_switch.home_name})")},
+            identifiers = {(DOMAIN, self.cync_switch.device_id)},
             manufacturer="Cync by Savant",
-            name = f"{self.cync_switch.room.name}",
-            suggested_area=room_name,
+            name = self.cync_switch.name,
+            suggested_area=self.cync_switch.room.name if self.cync_switch.room else "Unknown Room",
         )
 
     @property
