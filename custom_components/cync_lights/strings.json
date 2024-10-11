@@ -42,7 +42,7 @@
         "title": "Reload Cync Configuration",
         "description": "In case you have added new devices to your Cync account, you can opt to reauthorize and download your latest configuration.",
         "data":{
-          "re-authenticate":"Reauthorize?"
+          "re_authenticate":"Reauthorize?"
         }
       },
       "two_factor_code": {
