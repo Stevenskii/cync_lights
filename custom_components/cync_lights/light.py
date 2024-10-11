@@ -18,7 +18,6 @@ from homeassistant.components.light import (
     LightEntity,
     LightEntityDescription,
     LightEntityFeature,
-    FLASH_SHORT,
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -76,6 +75,8 @@ class CyncRoomEntity(LightEntity):
         self._attr_name = self.room.name
         self._attr_unique_id = self._generate_unique_id()
         self._attr_should_poll = False
+
+        # Initialize supported features
         self._attr_supported_features = LightEntityFeature(0)
 
         # Determine supported color modes based on capabilities
@@ -93,18 +94,18 @@ class CyncRoomEntity(LightEntity):
 
         self._attr_supported_color_modes = supported_color_modes
 
-        # Handle effects if supported
-        self._attr_effect_list = []
-        if self.room.hub.effect_mapping:
-            self._attr_effect_list = list(self.room.hub.effect_mapping.keys())
-            self._attr_supported_features |= LightEntityFeature.EFFECT
-
         # Add flash support
         self._attr_supported_features |= LightEntityFeature.FLASH
 
         # Add transition support if brightness is supported
         if self.room.support_brightness:
             self._attr_supported_features |= LightEntityFeature.TRANSITION
+
+        # Handle effects if supported
+        self._attr_effect_list = []
+        if hasattr(self.room, 'effects') and self.room.effects:
+            self._attr_effect_list = self.room.effects
+            self._attr_supported_features |= LightEntityFeature.EFFECT
 
     def _generate_unique_id(self) -> str:
         """Generate unique ID for the entity."""
@@ -267,6 +268,8 @@ class CyncSwitchEntity(LightEntity):
         self._attr_name = self.cync_switch.name
         self._attr_unique_id = f'cync_switch_{self.cync_switch.device_id}'
         self._attr_should_poll = False
+
+        # Initialize supported features
         self._attr_supported_features = LightEntityFeature(0)
 
         # Determine supported color modes based on capabilities
@@ -284,18 +287,18 @@ class CyncSwitchEntity(LightEntity):
 
         self._attr_supported_color_modes = supported_color_modes
 
-        # Handle effects if supported
-        self._attr_effect_list = []
-        if self.cync_switch.hub.effect_mapping:
-            self._attr_effect_list = list(self.cync_switch.hub.effect_mapping.keys())
-            self._attr_supported_features |= LightEntityFeature.EFFECT
-
         # Add flash support
         self._attr_supported_features |= LightEntityFeature.FLASH
 
         # Add transition support if brightness is supported
         if self.cync_switch.support_brightness:
             self._attr_supported_features |= LightEntityFeature.TRANSITION
+
+        # Handle effects if supported
+        self._attr_effect_list = []
+        if hasattr(self.cync_switch, 'effects') and self.cync_switch.effects:
+            self._attr_effect_list = self.cync_switch.effects
+            self._attr_supported_features |= LightEntityFeature.EFFECT
 
     async def async_added_to_hass(self) -> None:
         """Run when this Entity has been added to HA."""
