@@ -19,7 +19,7 @@ from homeassistant.components.light import (
     LightEntity,
     LightEntityFeature,
 )
-from homeassistant.components.group import async_create_group  # Correct import
+from homeassistant.helpers.entity_group import async_create_group  # Correct import
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity import DeviceInfo
@@ -241,7 +241,11 @@ class CyncSwitchEntity(LightEntity):
 
         if not color_temp_kelvin and ATTR_COLOR_TEMP in kwargs:
             # Convert mireds to Kelvin
-            color_temp_kelvin = int(1000000 / kwargs[ATTR_COLOR_TEMP])
+            try:
+                color_temp_kelvin = int(1000000 / kwargs[ATTR_COLOR_TEMP])
+            except (ValueError, ZeroDivisionError) as e:
+                _LOGGER.error("Invalid color_temp value: %s", e)
+                color_temp_kelvin = None
 
         effect = kwargs.get(ATTR_EFFECT)
         flash = kwargs.get(ATTR_FLASH)
