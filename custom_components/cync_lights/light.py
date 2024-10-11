@@ -125,9 +125,9 @@ class CyncRoomEntity(LightEntity):
         """Return device registry information for this entity."""
         room_name = self.room.parent_room if self.room.is_subgroup else self.room.name
         return DeviceInfo(
-            identifiers={(DOMAIN, f"{room_name} ({self.room.home_name})")},
+            identifiers={(DOMAIN, room_name)},
             manufacturer="Cync by Savant",
-            name=f"{room_name} ({self.room.home_name})",
+            name=room_name,
             suggested_area=room_name,
         )
 
@@ -323,9 +323,9 @@ class CyncSwitchEntity(LightEntity):
             room_name = "Unknown Room"
 
         return DeviceInfo(
-            identifiers={(DOMAIN, f"{room_name} ({self.cync_switch.home_name})")},
+            identifiers={(DOMAIN, room_name)},
             manufacturer="Cync by Savant",
-            name=f"{room_name} ({self.cync_switch.home_name})",
+            name=room_name,
             suggested_area=room_name,
         )
 
