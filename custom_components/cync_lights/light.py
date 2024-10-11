@@ -119,7 +119,7 @@ class CyncRoomEntity(LightEntity):
         return DeviceInfo(
             identifiers={(DOMAIN, self.room.room_id)},
             manufacturer="Cync by Savant",
-            name=self.room_name,
+            name=self.room.name,
             suggested_area=self.room.parent_room if self.room.is_subgroup else self.room.name,
         )
 
