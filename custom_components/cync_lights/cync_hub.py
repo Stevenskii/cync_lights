@@ -144,7 +144,6 @@ class CyncHub:
                 try:
                     done, pending = await asyncio.wait(read_write_tasks, return_when=asyncio.FIRST_EXCEPTION)
                     for task in done:
-                        exception = task.exception()
                         try:
                             result = task.result()
                         except Exception as e:
@@ -189,8 +188,19 @@ class CyncHub:
                                 deviceID = self.home_devices[home_id][int(packet[21])]
                                 state = int(packet[27]) > 0
                                 brightness = int(packet[28]) if state else 0
+                                color_temp = int(packet[29])
+                                rgb = {'r': int(packet[30]), 'g': int(packet[31]), 'b': int(packet[32]), 'active': int(packet[29]) == 254}
+
+                                # Scale RGB values from 0-100 to 0-255
+                                rgb_scaled = {
+                                    'r': int(rgb['r'] * 255 / 100),
+                                    'g': int(rgb['g'] * 255 / 100),
+                                    'b': int(rgb['b'] * 255 / 100),
+                                    'active': rgb['active']
+                                }
+
                                 if deviceID in self.cync_switches:
-                                    self.cync_switches[deviceID].update_switch(state, brightness, self.cync_switches[deviceID].color_temp_kelvin, self.cync_switches[deviceID].rgb)
+                                    self.cync_switches[deviceID].update_switch(state, brightness, color_temp, rgb_scaled)
                             elif packet_length >= 25 and int(packet[13]) == 84:
                                 # Parse motion and ambient light sensor packet
                                 deviceID = self.home_devices[home_id][int(packet[16])]
@@ -214,13 +224,22 @@ class CyncHub:
                                                 device_id = self.home_devices[home_id][(i + 1) * 256 + int(packet[0])]
                                                 state = int((int(packet[12]) >> i) & int(packet[8])) > 0
                                                 brightness = 100 if state else 0
-                                                self.cync_switches[device_id].update_switch(state, brightness, self.cync_switches[device_id].color_temp_kelvin, self.cync_switches[device_id].rgb)
+                                                self.cync_switches[device_id].update_switch(state, brightness)
                                         else:
                                             state = int(packet[8]) > 0
                                             brightness = int(packet[12]) if state else 0
                                             color_temp = int(packet[16])
                                             rgb = {'r': int(packet[20]), 'g': int(packet[21]), 'b': int(packet[22]), 'active': int(packet[16]) == 254}
-                                            self.cync_switches[deviceID].update_switch(state, brightness, color_temp, rgb)
+
+                                            # Scale RGB values from 0-100 to 0-255
+                                            rgb_scaled = {
+                                                'r': int(rgb['r'] * 255 / 100),
+                                                'g': int(rgb['g'] * 255 / 100),
+                                                'b': int(rgb['b'] * 255 / 100),
+                                                'active': rgb['active']
+                                            }
+
+                                            self.cync_switches[deviceID].update_switch(state, brightness, color_temp, rgb_scaled)
                                     packet = packet[24:]
                         elif packet_type == 131:
                             switch_id = str(struct.unpack(">I", packet[0:4])[0])
@@ -230,8 +249,19 @@ class CyncHub:
                                 deviceID = self.home_devices[home_id][int(packet[21])]
                                 state = int(packet[27]) > 0
                                 brightness = int(packet[28]) if state else 0
+                                color_temp = int(packet[29])
+                                rgb = {'r': int(packet[30]), 'g': int(packet[31]), 'b': int(packet[32]), 'active': int(packet[29]) == 254}
+
+                                # Scale RGB values from 0-100 to 0-255
+                                rgb_scaled = {
+                                    'r': int(rgb['r'] * 255 / 100),
+                                    'g': int(rgb['g'] * 255 / 100),
+                                    'b': int(rgb['b'] * 255 / 100),
+                                    'active': rgb['active']
+                                }
+
                                 if deviceID in self.cync_switches:
-                                    self.cync_switches[deviceID].update_switch(state, brightness, self.cync_switches[deviceID].color_temp_kelvin, self.cync_switches[deviceID].rgb)
+                                    self.cync_switches[deviceID].update_switch(state, brightness, color_temp, rgb_scaled)
                             elif packet_length >= 25 and int(packet[13]) == 84:
                                 # Parse motion and ambient light sensor packet
                                 deviceID = self.home_devices[home_id][int(packet[16])]
@@ -255,13 +285,22 @@ class CyncHub:
                                                 device_id = self.home_devices[home_id][(i + 1) * 256 + int(packet[3])]
                                                 state = int((int(packet[5]) >> i) & int(packet[4])) > 0
                                                 brightness = 100 if state else 0
-                                                self.cync_switches[device_id].update_switch(state, brightness, self.cync_switches[device_id].color_temp_kelvin, self.cync_switches[device_id].rgb)
+                                                self.cync_switches[device_id].update_switch(state, brightness)
                                         else:
                                             state = int(packet[4]) > 0
                                             brightness = int(packet[5]) if state else 0
                                             color_temp = int(packet[6])
                                             rgb = {'r': int(packet[7]), 'g': int(packet[8]), 'b': int(packet[9]), 'active': int(packet[6]) == 254}
-                                            self.cync_switches[deviceID].update_switch(state, brightness, color_temp, rgb)
+
+                                            # Scale RGB values from 0-100 to 0-255
+                                            rgb_scaled = {
+                                                'r': int(rgb['r'] * 255 / 100),
+                                                'g': int(rgb['g'] * 255 / 100),
+                                                'b': int(rgb['b'] * 255 / 100),
+                                                'active': rgb['active']
+                                            }
+
+                                            self.cync_switches[deviceID].update_switch(state, brightness, color_temp, rgb_scaled)
                                 packet = packet[19:]
                         elif packet_type == 171:
                             switch_id = str(struct.unpack(">I", packet[0:4])[0])
@@ -343,7 +382,9 @@ class CyncHub:
 
     def combo_control(self, state, brightness, color_tone, rgb, switch_id, mesh_id, seq):
         """Send combo control command to adjust state, brightness, color temperature, and RGB."""
-        rgb_values = rgb
+        # Scale RGB values from 0-255 to 0-100
+        rgb_scaled = tuple(int(x * 100 / 255) for x in rgb)
+        rgb_values = rgb_scaled
         checksum = (496 + int(mesh_id[0]) + int(mesh_id[1]) + (1 if state else 0) + brightness + color_tone + sum(rgb_values)) % 256
         combo_request = (
             bytes.fromhex('7300000022') +
@@ -595,7 +636,7 @@ class CyncRoom:
         """Update the current state of the room"""
         _brightness = self.brightness
         _color_temp = self.color_temp_kelvin
-        _rgb = self.rgb.copy()
+        _rgb = self.rgb
         _power_state = any(
             self.hub.cync_switches[device_id].power_state for device_id in self.switches
         ) or any(
@@ -607,8 +648,7 @@ class CyncRoom:
             ) + sum(
                 self.hub.cync_rooms[room_id].brightness for room_id in self.subgroups
             )
-            count = len(self.switches) + len(self.subgroups)
-            _brightness = round(total_brightness / count)
+            _brightness = round(total_brightness / (len(self.switches) + len(self.subgroups)))
         else:
             _brightness = 100 if _power_state else 0
         if self.support_color_temp:
@@ -617,9 +657,11 @@ class CyncRoom:
             ) + sum(
                 self.hub.cync_rooms[room_id].color_temp_kelvin for room_id in self.groups_support_color_temp
             )
-            count = len(self.switches_support_color_temp) + len(self.groups_support_color_temp)
-            _color_temp = round(total_color_temp / count)
+            _color_temp = round(
+                total_color_temp / (len(self.switches_support_color_temp) + len(self.groups_support_color_temp))
+            )
         if self.support_rgb:
+            count = len(self.switches_support_rgb) + len(self.groups_support_rgb)
             total_r = sum(
                 self.hub.cync_switches[device_id].rgb['r'] for device_id in self.switches_support_rgb
             ) + sum(
@@ -635,7 +677,6 @@ class CyncRoom:
             ) + sum(
                 self.hub.cync_rooms[room_id].rgb['b'] for room_id in self.groups_support_rgb
             )
-            count = len(self.switches_support_rgb) + len(self.groups_support_rgb)
             _rgb['r'] = round(total_r / count)
             _rgb['g'] = round(total_g / count)
             _rgb['b'] = round(total_b / count)
@@ -766,7 +807,7 @@ class CyncSwitch:
             else:
                 rgb_values = (0, 0, 0)  # Default RGB values
 
-            # Always use combo_control to turn on the light
+            # Use combo_control to turn on the light
             self.hub.combo_control(True, brightness_percent, color_temp, rgb_values, controller, self.mesh_id, seq)
 
             # Handle effects, flash, and transition if supported
@@ -832,17 +873,19 @@ class CyncSwitch:
         else:
             color_temp_kelvin = self.color_temp_kelvin
 
-        if rgb is None:
-            rgb = self.rgb
+        if rgb is not None:
+            rgb_scaled = rgb  # RGB is already scaled in the packet parsing
+        else:
+            rgb_scaled = self.rgb
 
         if (self.power_state != state or
                 self.brightness != brightness or
                 self.color_temp_kelvin != color_temp_kelvin or
-                self.rgb != rgb):
+                self.rgb != rgb_scaled):
             self.power_state = state
             self.brightness = brightness if self.support_brightness and state else 100 if state else 0
             self.color_temp_kelvin = color_temp_kelvin
-            self.rgb = rgb
+            self.rgb = rgb_scaled
             self.publish_update()
             if self._update_callback:
                 self._hass.add_job(self._update_callback)
