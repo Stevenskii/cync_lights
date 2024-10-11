@@ -69,7 +69,7 @@ class CyncMotionSensorEntity(BinarySensorEntity):
 
     async def async_added_to_hass(self) -> None:
         """Call when the entity is added to Home Assistant."""
-        self.motion_sensor.register(self.async_write_ha_state)
+        self.motion_sensor.register(self.async_write_ha_state, self.hass)
 
     async def async_will_remove_from_hass(self) -> None:
         """Call when the entity is about to be removed from Home Assistant."""
@@ -103,7 +103,7 @@ class CyncAmbientLightSensorEntity(BinarySensorEntity):
 
     async def async_added_to_hass(self) -> None:
         """Call when the entity is added to Home Assistant."""
-        self.ambient_light_sensor.register(self.async_write_ha_state)
+        self.ambient_light_sensor.register(self.async_write_ha_state, self.hass)
 
     async def async_will_remove_from_hass(self) -> None:
         """Call when the entity is about to be removed from Home Assistant."""
