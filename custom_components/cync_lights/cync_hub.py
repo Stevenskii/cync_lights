@@ -16,34 +16,16 @@ API_DEVICES = "https://api.gelighting.com/v2/user/{user}/subscribe/devices"
 API_DEVICE_INFO = "https://api.gelighting.com/v2/product/{product_id}/device/{device_id}/property"
 
 Capabilities = {
-    "ONOFF": [1, 5, 6, 7, 8, 9, 10, 11, 13, 14, 15, 17, 18, 19, 20, 21, 22, 23, 24,
-              25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 48, 49,
-              51, 52, 53, 54, 55, 56, 57, 58, 59, 61, 62, 63, 64, 65, 66, 67, 68, 80,
-              81, 82, 83, 85, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138,
-              139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150, 151, 152,
-              153, 154, 156, 158, 159, 160, 161, 162, 163, 164, 165],
-    "BRIGHTNESS": [1, 5, 6, 7, 8, 9, 10, 11, 13, 14, 15, 17, 18, 19, 20, 21, 22, 23,
-                   24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 48, 49, 55,
-                   56, 80, 81, 82, 83, 85, 128, 129, 130, 131, 132, 133, 134, 135, 136,
-                   137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150,
-                   151, 152, 153, 154, 156, 158, 159, 160, 161, 162, 163, 164, 165],
-    "COLORTEMP": [5, 6, 7, 8, 10, 11, 14, 15, 19, 20, 21, 22, 23, 25, 26, 28, 29, 30,
-                  31, 32, 33, 34, 35, 80, 82, 83, 85, 129, 130, 131, 132, 133, 135, 136,
-                  137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 153, 154, 156,
-                  158, 159, 160, 161, 162, 163, 164, 165],
-    "RGB": [6, 7, 8, 21, 22, 23, 30, 31, 32, 33, 34, 35, 131, 132, 133, 137, 138, 139,
-            140, 141, 142, 143, 146, 147, 153, 154, 156, 158, 159, 160, 161, 162, 163,
-            164, 165],
-    "MOTION": [37, 49, 54],
-    "AMBIENT_LIGHT": [37, 49, 54],
-    "WIFICONTROL": [36, 37, 38, 39, 40, 48, 49, 51, 52, 53, 54, 55, 56, 57, 58, 59,
-                    61, 62, 63, 64, 65, 66, 67, 68, 80, 81, 128, 129, 130, 131, 132,
-                    133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145,
-                    146, 147, 148, 149, 150, 151, 152, 153, 154, 156, 158, 159, 160,
-                    161, 162, 163, 164, 165],
-    "PLUG": [64, 65, 66, 67, 68],
-    "FAN": [81],
-    "MULTIELEMENT": {'67': 2}
+    "ONOFF":[1,5,6,7,8,9,10,11,13,14,15,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,48,49,51,52,53,54,55,56,57,58,59,61,62,63,64,65,66,67,68,80,81,82,83,85,128,129,130,131,132,133,134,135,136,137,138,139,140,141,142,143,144,145,146,147,148,149,150,151,152,153,154,155,156,158,159,160,161,162,163,164,165,169,170],
+    "BRIGHTNESS":[1,5,6,7,8,9,10,11,13,14,15,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,48,49,55,56,80,81,82,83,85,128,129,130,131,132,133,134,135,136,137,138,139,140,141,142,143,144,145,146,147,148,149,150,151,152,153,154,155,156,158,159,160,161,162,163,164,165,169,170],
+    "COLORTEMP":[5,6,7,8,10,11,14,15,19,20,21,22,23,25,26,28,29,30,31,32,33,34,35,80,82,83,85,129,130,131,132,133,135,136,137,138,139,140,141,142,143,144,145,146,147,153,154,155,156,158,159,160,161,162,163,164,165,169,170],
+    "RGB":[6,7,8,21,22,23,30,31,32,33,34,35,131,132,133,137,138,139,140,141,142,143,146,147,153,154,155,156,158,159,160,161,162,163,164,165,169,170],
+    "MOTION":[37,49,54],
+    "AMBIENT_LIGHT":[37,49,54],
+    "WIFICONTROL":[36,37,38,39,40,48,49,51,52,53,54,55,56,57,58,59,61,62,63,64,65,66,67,68,80,81,128,129,130,131,132,133,134,135,136,137,138,139,140,141,142,143,144,145,146,147,148,149,150,151,152,153,154,155,156,158,159,160,161,162,163,164,165,169,170],
+    "PLUG":[64,65,66,67,68],
+    "FAN":[81],
+    "MULTIELEMENT":{'67':2}
 }
 
 
@@ -341,13 +323,26 @@ class CyncHub:
         self.loop.create_task(send())
 
     def combo_control(self, state, brightness, color_tone, rgb, switch_id, mesh_id, seq):
+        """Send combo control command to adjust state, brightness, color temperature, and RGB."""
         # Adjusted to handle RGB values correctly
         rgb_values = rgb
-        combo_request = bytes.fromhex('7300000022') + int(switch_id).to_bytes(4, 'big') + int(seq).to_bytes(2, 'big') + \
-            bytes.fromhex('007e00000000f8f010000000000000') + mesh_id + bytes.fromhex('f00000') + \
-            (1 if state else 0).to_bytes(1, 'big') + brightness.to_bytes(1, 'big') + color_tone.to_bytes(1, 'big') + \
-            rgb_values[0].to_bytes(1, 'big') + rgb_values[1].to_bytes(1, 'big') + rgb_values[2].to_bytes(1, 'big') + \
-            ((496 + int(mesh_id[0]) + int(mesh_id[1]) + (1 if state else 0) + brightness + color_tone + sum(rgb_values)) % 256).to_bytes(1, 'big') + bytes.fromhex('7e')
+        checksum = (496 + int(mesh_id[0]) + int(mesh_id[1]) + (1 if state else 0) + brightness + color_tone + sum(rgb_values)) % 256
+        combo_request = (
+            bytes.fromhex('7300000022') +
+            int(switch_id).to_bytes(4, 'big') +
+            int(seq).to_bytes(2, 'big') +
+            bytes.fromhex('007e00000000f8f010000000000000') +
+            mesh_id +
+            bytes.fromhex('f00000') +
+            (1 if state else 0).to_bytes(1, 'big') +
+            brightness.to_bytes(1, 'big') +
+            color_tone.to_bytes(1, 'big') +
+            rgb_values[0].to_bytes(1, 'big') +
+            rgb_values[1].to_bytes(1, 'big') +
+            rgb_values[2].to_bytes(1, 'big') +
+            checksum.to_bytes(1, 'big') +
+            bytes.fromhex('7e')
+        )
         self.loop.call_soon_threadsafe(self.send_request, combo_request)
 
     def turn_on(self, switch_id, mesh_id, seq):
@@ -507,9 +502,9 @@ class CyncRoom:
             if brightness is not None:
                 brightness_percent = round(brightness * 100 / 255)
             else:
-                brightness_percent = self.brightness
+                brightness_percent = self.brightness if self.brightness else 100  # Default to 100% if no brightness is set
 
-            # Handle color temperature
+            # Handle color temperature and RGB
             if color_temp_kelvin is not None:
                 # Calculate color_temp as a percentage
                 color_temp = round(
@@ -518,10 +513,13 @@ class CyncRoom:
                         (self.max_color_temp_kelvin - self.min_color_temp_kelvin)
                     ) * 100
                 )
-                self.hub.set_color_temp(color_temp, controller, self.mesh_id, seq)
+                self.hub.combo_control(True, brightness_percent, color_temp, (0, 0, 0), controller, self.mesh_id, seq)
             elif rgb_color is not None:
                 rgb_values = tuple(int(x) for x in rgb_color)
                 self.hub.combo_control(True, brightness_percent, 254, rgb_values, controller, self.mesh_id, seq)
+            elif brightness is not None:
+                # Adjust brightness without changing color
+                self.hub.combo_control(True, brightness_percent, 254, (0, 0, 0), controller, self.mesh_id, seq)
             elif effect:
                 self.hub.set_effect(effect, controller, self.mesh_id, seq)
             else:
@@ -731,9 +729,9 @@ class CyncSwitch:
             if brightness is not None:
                 brightness_percent = round(brightness * 100 / 255)
             else:
-                brightness_percent = self.brightness
+                brightness_percent = self.brightness if self.brightness else 100  # Default to 100% if no brightness is set
 
-            # Handle color temperature
+            # Handle color temperature and RGB
             if color_temp_kelvin is not None:
                 # Calculate color_temp as a percentage
                 color_temp = round(
@@ -742,10 +740,13 @@ class CyncSwitch:
                         (self.max_color_temp_kelvin - self.min_color_temp_kelvin)
                     ) * 100
                 )
-                self.hub.set_color_temp(color_temp, controller, self.mesh_id, seq)
+                self.hub.combo_control(True, brightness_percent, color_temp, (0, 0, 0), controller, self.mesh_id, seq)
             elif rgb_color is not None:
                 rgb_values = tuple(int(x) for x in rgb_color)
                 self.hub.combo_control(True, brightness_percent, 254, rgb_values, controller, self.mesh_id, seq)
+            elif brightness is not None:
+                # Adjust brightness without changing color
+                self.hub.combo_control(True, brightness_percent, 254, (0, 0, 0), controller, self.mesh_id, seq)
             elif effect:
                 self.hub.set_effect(effect, controller, self.mesh_id, seq)
             else:
@@ -916,6 +917,7 @@ class CyncAmbientLightSensor:
     def publish_update(self):
         if self._update_callback:
             self._hass.add_job(self._update_callback)
+
 
 class CyncUserData:
     """Class to handle user authentication and data retrieval."""
@@ -1190,11 +1192,14 @@ class CyncUserData:
                         _LOGGER.warning("Subgroup %s not found. Removing from room %s.", subgroup_id, room_id)
                         room_info["subgroups"].remove(subgroup_id)
 
+
 class LostConnection(Exception):
     """Lost connection to Cync Server"""
 
+
 class ShuttingDown(Exception):
     """Cync client shutting down"""
+
 
 class InvalidCyncConfiguration(Exception):
     """Cync configuration is not supported"""
