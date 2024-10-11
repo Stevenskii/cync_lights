@@ -748,7 +748,7 @@ class CyncSwitch:
 
             # Handle brightness
             if brightness is not None:
-                brightness_percent = round(brightness * 100 / 255)
+                brightness_percent = round(brightness * 255 / 100)
             else:
                 brightness_percent = self.brightness if self.brightness else 100  # Default to 100% if no brightness is set
 
