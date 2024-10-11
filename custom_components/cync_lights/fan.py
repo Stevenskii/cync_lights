@@ -62,7 +62,7 @@ class CyncFanEntity(FanEntity):
 
     async def async_added_to_hass(self) -> None:
         """Call when the fan entity is added to Home Assistant."""
-        self.cync_switch.register(self.async_write_ha_state)
+        self.cync_switch.register(self.async_write_ha_state, self.hass)
 
     async def async_will_remove_from_hass(self) -> None:
         """Call when the fan entity is about to be removed from Home Assistant."""
