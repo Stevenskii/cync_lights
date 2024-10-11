@@ -229,10 +229,13 @@ class CyncOptionsFlowHandler(config_entries.OptionsFlow):
 
         if user_input is not None:
             try:
-                user_data = self.config_entry.data["user_input"]
-                info = await cync_login(self.cync_hub, user_data)
+                # Use the provided credentials to re-authenticate
+                info = await cync_login(self.cync_hub, user_input)
                 info["data"]["cync_config"] = await self.cync_hub.get_cync_config()
             except TwoFactorCodeRequired:
+                # Store the username and password for later use
+                self.cync_hub.username = user_input["username"]
+                self.cync_hub.password = user_input["password"]
                 return await self.async_step_two_factor_code()
             except InvalidAuth:
                 errors["base"] = "invalid_auth"
@@ -241,12 +244,16 @@ class CyncOptionsFlowHandler(config_entries.OptionsFlow):
                 errors["base"] = "unknown"
             else:
                 self.data = info
+                # Update the config entry with new data
                 self.hass.config_entries.async_update_entry(
                     self.config_entry, data=self.data["data"]
                 )
                 return await self.async_step_select_switches()
 
-        return self.async_show_form(step_id="re_auth", errors=errors)
+        # Show the re-authentication form
+        return self.async_show_form(
+            step_id="re_auth", data_schema=STEP_USER_DATA_SCHEMA, errors=errors
+        )
 
     async def async_step_two_factor_code(
         self, user_input: dict[str, Any] | None = None
@@ -265,6 +272,7 @@ class CyncOptionsFlowHandler(config_entries.OptionsFlow):
                 errors["base"] = "unknown"
             else:
                 self.data = info
+                # Update the config entry with new data
                 self.hass.config_entries.async_update_entry(
                     self.config_entry, data=self.data["data"]
                 )
@@ -283,7 +291,8 @@ class CyncOptionsFlowHandler(config_entries.OptionsFlow):
         if user_input is not None:
             return self.async_create_entry(title="", data=user_input)
 
-        cync_config = self.config_entry.data.get("cync_config", {})
+        # Retrieve the updated cync_config
+        cync_config = self.data.get("data", {}).get("cync_config") or self.config_entry.data.get("cync_config", {})
         rooms = cync_config.get("rooms", {})
         devices = cync_config.get("devices", {})
 
