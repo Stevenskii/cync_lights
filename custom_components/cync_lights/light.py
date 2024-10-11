@@ -18,11 +18,7 @@ from homeassistant.components.light import (
     LightEntity,
     LightEntityFeature,
 )
-from homeassistant.components.group import (
-    DOMAIN as GROUP_DOMAIN,
-    SERVICE_CREATE,
-    SERVICE_SET,
-)
+from homeassistant.components.group import DOMAIN as GROUP_DOMAIN  # Removed SERVICE_CREATE and SERVICE_SET
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity import DeviceInfo
@@ -84,7 +80,7 @@ async def async_setup_entry(
             try:
                 await hass.services.async_call(
                     GROUP_DOMAIN,
-                    SERVICE_SET,
+                    'set',  # Use string literal instead of SERVICE_SET
                     {
                         "object_id": group_entity_id.split(".")[1],
                         "name": group_name,
@@ -100,7 +96,7 @@ async def async_setup_entry(
             try:
                 await hass.services.async_call(
                     GROUP_DOMAIN,
-                    SERVICE_CREATE,
+                    'create',  # Use string literal instead of SERVICE_CREATE
                     {
                         "object_id": group_entity_id.split(".")[1],
                         "name": group_name,
