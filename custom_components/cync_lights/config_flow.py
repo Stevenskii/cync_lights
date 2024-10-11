@@ -215,7 +215,7 @@ class CyncOptionsFlowHandler(config_entries.OptionsFlow):
 
         data_schema = vol.Schema(
             {
-                vol.Required("re_authenticate", default="No"): vol.In(["Yes", "No"]),
+                vol.Required('re_authenticate', default="No"): vol.In(["Yes", "No"]),
             }
         )
 
