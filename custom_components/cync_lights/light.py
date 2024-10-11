@@ -18,11 +18,10 @@ from homeassistant.components.light import (
     LightEntityDescription,
     LightEntityFeature,
     FLASH_SHORT,
-    EFFECT_NONE,
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import ATTR_COLOR_TEMP
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
@@ -207,15 +206,14 @@ class CyncRoomEntity(LightEntity):
     def effect(self) -> str | None:
         """Return the current effect."""
         if hasattr(self.room, 'current_effect'):
-            return self.room.current_effect or EFFECT_NONE
+            return self.room.current_effect or None
         return None
 
     @property
     def extra_state_attributes(self) -> dict[str, Any] | None:
         """Return the optional state attributes."""
         attributes = {
-            "room_mode": self.room.mode if hasattr(self.room, 'mode') else None,
-            # Add any other extra attributes here
+            "room_mode": getattr(self.room, 'mode', None),
             "color_temp_kelvin": self.color_temp_kelvin,
         }
         return attributes
@@ -233,7 +231,7 @@ class CyncRoomEntity(LightEntity):
         transition = kwargs.get(ATTR_TRANSITION)
 
         # Handle effect "None" to stop any active effect
-        if effect == EFFECT_NONE:
+        if effect == "None":
             effect = None
 
         await self.room.turn_on(
@@ -383,15 +381,14 @@ class CyncSwitchEntity(LightEntity):
     def effect(self) -> str | None:
         """Return the current effect."""
         if hasattr(self.cync_switch, 'current_effect'):
-            return self.cync_switch.current_effect or EFFECT_NONE
+            return self.cync_switch.current_effect or None
         return None
 
     @property
     def extra_state_attributes(self) -> dict[str, Any] | None:
         """Return the optional state attributes."""
         attributes = {
-            "switch_mode": self.cync_switch.mode if hasattr(self.cync_switch, 'mode') else None,
-            # Add any other extra attributes here
+            "switch_mode": getattr(self.cync_switch, 'mode', None),
             "color_temp_kelvin": self.color_temp_kelvin,
         }
         return attributes
@@ -409,7 +406,7 @@ class CyncSwitchEntity(LightEntity):
         transition = kwargs.get(ATTR_TRANSITION)
 
         # Handle effect "None" to stop any active effect
-        if effect == EFFECT_NONE:
+        if effect == "None":
             effect = None
 
         await self.cync_switch.turn_on(
