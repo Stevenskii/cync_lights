@@ -9,6 +9,7 @@ import logging
 from homeassistant.components.light import (
     ATTR_BRIGHTNESS,
     ATTR_COLOR_TEMP_KELVIN,
+    ATTR_COLOR_TEMP,
     ATTR_EFFECT,
     ATTR_FLASH,
     ATTR_RGB_COLOR,
@@ -20,7 +21,6 @@ from homeassistant.components.light import (
     FLASH_SHORT,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import ATTR_COLOR_TEMP
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
