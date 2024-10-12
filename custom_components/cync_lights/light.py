@@ -130,9 +130,7 @@ class CyncSwitchEntity(LightEntity):
     @property
     def brightness(self) -> int | None:
         """Return the brightness of this switch between 0..255."""
-        if self.cync_switch.brightness is not None:
             return round(self.cync_switch.brightness * 255 / 100)
-        return None
 
     @property
     def color_temp(self) -> int | None:
