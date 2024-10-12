@@ -821,8 +821,7 @@ class CyncSwitch:
                 rgb_values = (0, 0, 0)  # Default RGB values
 
             # Use combo_control to turn on the light
-            self.
-            .combo_control(True, brightness_percent, color_temp, rgb_values, controller, self.mesh_id, seq)
+            self.combo_control(True, brightness_percent, color_temp, rgb_values, controller, self.mesh_id, seq)
 
             # Handle effects, flash, and transition if supported
             if effect:
