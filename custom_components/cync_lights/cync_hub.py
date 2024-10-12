@@ -1,3 +1,4 @@
+# cync_hub.py
 import logging
 import threading
 import asyncio
@@ -46,7 +47,6 @@ Capabilities = {
     "FAN": [81],
     "MULTIELEMENT": {'67': 2}
 }
-
 
 class CyncHub:
 
@@ -222,7 +222,14 @@ class CyncHub:
                                             brightness = int(packet[12]) if state else 0
                                             color_temp = int(packet[16])
                                             rgb = {'r': int(packet[20]), 'g': int(packet[21]), 'b': int(packet[22]), 'active': int(packet[16]) == 254}
-                                            self.cync_switches[deviceID].update_switch(state, brightness, color_temp, rgb)
+
+                                            # Handle color_temp_kelvin being 254
+                                            if color_temp == 254:
+                                                color_temp_kelvin = None
+                                            else:
+                                                color_temp_kelvin = int(1000000 / color_temp) if color_temp > 0 else None
+
+                                            self.cync_switches[deviceID].update_switch(state, brightness, color_temp_kelvin, rgb)
                                     packet = packet[24:]
                         elif packet_type == 131:
                             switch_id = str(struct.unpack(">I", packet[0:4])[0])
@@ -266,7 +273,14 @@ class CyncHub:
                                             brightness = int(packet[5]) if state else 0
                                             color_temp = int(packet[6])
                                             rgb = {'r': int(packet[7]), 'g': int(packet[8]), 'b': int(packet[9]), 'active': int(packet[6]) == 254}
-                                            self.cync_switches[deviceID].update_switch(state, brightness, color_temp, rgb)
+
+                                            # Handle color_temp_kelvin being 254
+                                            if color_temp == 254:
+                                                color_temp_kelvin = None
+                                            else:
+                                                color_temp_kelvin = int(1000000 / color_temp) if color_temp > 0 else None
+
+                                            self.cync_switches[deviceID].update_switch(state, brightness, color_temp_kelvin, rgb)
                                 packet = packet[19:]
                         elif packet_type == 171:
                             switch_id = str(struct.unpack(">I", packet[0:4])[0])
@@ -366,24 +380,28 @@ class CyncHub:
             checksum.to_bytes(1, 'big') +
             bytes.fromhex('7e')
         )
+        _LOGGER.debug(f"Sending combo_control: {combo_request.hex()}")
         self.loop.call_soon_threadsafe(self.send_request, combo_request)
 
     def turn_on(self, switch_id, mesh_id, seq):
         power_request = bytes.fromhex('730000001f') + int(switch_id).to_bytes(4, 'big') + int(seq).to_bytes(2, 'big') + \
             bytes.fromhex('007e00000000f8d00d000000000000') + mesh_id + bytes.fromhex('d00000010000') + \
             ((430 + int(mesh_id[0]) + int(mesh_id[1])) % 256).to_bytes(1, 'big') + bytes.fromhex('7e')
+        _LOGGER.debug(f"Sending turn_on: {power_request.hex()}")
         self.loop.call_soon_threadsafe(self.send_request, power_request)
 
     def turn_off(self, switch_id, mesh_id, seq):
         power_request = bytes.fromhex('730000001f') + int(switch_id).to_bytes(4, 'big') + int(seq).to_bytes(2, 'big') + \
             bytes.fromhex('007e00000000f8d00d000000000000') + mesh_id + bytes.fromhex('d00000000000') + \
             ((429 + int(mesh_id[0]) + int(mesh_id[1])) % 256).to_bytes(1, 'big') + bytes.fromhex('7e')
+        _LOGGER.debug(f"Sending turn_off: {power_request.hex()}")
         self.loop.call_soon_threadsafe(self.send_request, power_request)
 
     def set_color_temp(self, color_temp, switch_id, mesh_id, seq):
         color_temp_request = bytes.fromhex('730000001e') + int(switch_id).to_bytes(4, 'big') + int(seq).to_bytes(2, 'big') + \
             bytes.fromhex('007e00000000f8e20c000000000000') + mesh_id + bytes.fromhex('e2000005') + \
             color_temp.to_bytes(1, 'big') + ((469 + int(mesh_id[0]) + int(mesh_id[1]) + color_temp) % 256).to_bytes(1, 'big') + bytes.fromhex('7e')
+        _LOGGER.debug(f"Sending set_color_temp: {color_temp_request.hex()}")
         self.loop.call_soon_threadsafe(self.send_request, color_temp_request)
 
     def set_effect(self, effect_name, switch_id, mesh_id, seq):
@@ -398,6 +416,7 @@ class CyncHub:
         effect_request = bytes.fromhex('7300000020') + int(switch_id).to_bytes(4, 'big') + int(seq).to_bytes(2, 'big') + \
             bytes.fromhex('007e00000000f8e80e000000000000') + mesh_id + bytes.fromhex('e8000002') + \
             effect_index.to_bytes(1, 'big') + ((480 + int(mesh_id[0]) + int(mesh_id[1]) + effect_index) % 256).to_bytes(1, 'big') + bytes.fromhex('7e')
+        _LOGGER.debug(f"Sending set_effect: {effect_request.hex()}")
         self.loop.call_soon_threadsafe(self.send_request, effect_request)
 
     def set_flash(self, flash, switch_id, mesh_id, seq):
@@ -418,6 +437,7 @@ class CyncHub:
         fade_request = bytes.fromhex('7300000022') + int(switch_id).to_bytes(4, 'big') + int(seq).to_bytes(2, 'big') + \
             bytes.fromhex('007e00000000f8f010000000000000') + mesh_id + bytes.fromhex('f00000') + \
             fade_duration.to_bytes(2, 'big') + ((496 + int(mesh_id[0]) + int(mesh_id[1]) + fade_duration) % 256).to_bytes(1, 'big') + bytes.fromhex('7e')
+        _LOGGER.debug(f"Sending set_transition: {fade_request.hex()}")
         self.loop.call_soon_threadsafe(self.send_request, fade_request)
 
     def get_seq_num(self):
@@ -525,15 +545,23 @@ class CyncRoom:
             else:
                 brightness_percent = self.brightness if self.brightness else 100  # Default to 100% if no brightness is set
 
+            _LOGGER.debug(
+                "Sending turn_on command: state=True, brightness_percent=%s, color_temp_kelvin=%s, rgb_color=%s",
+                brightness_percent, color_temp_kelvin, rgb_color
+            )
+
             # Handle color temperature
             if color_temp_kelvin is not None:
-                # Calculate color_temp as a percentage
-                color_temp = round(
-                    (
-                        (color_temp_kelvin - self.min_color_temp_kelvin) /
-                        (self.max_color_temp_kelvin - self.min_color_temp_kelvin)
-                    ) * 100
-                )
+                if color_temp_kelvin == 254:
+                    color_temp = 254  # Indicates no color temperature adjustment
+                else:
+                    # Calculate color_temp as a percentage
+                    color_temp = round(
+                        (
+                            (color_temp_kelvin - self.min_color_temp_kelvin) /
+                            (self.max_color_temp_kelvin - self.min_color_temp_kelvin)
+                        ) * 100
+                    )
             else:
                 color_temp = 254  # Default value indicating no color temperature adjustment
 
@@ -614,56 +642,67 @@ class CyncRoom:
             _brightness = round(total_brightness / (len(self.switches) + len(self.subgroups)))
         else:
             _brightness = 100 if _power_state else 0
+
         if self.support_color_temp:
-            total_color_temp = sum(
-                self.hub.cync_switches[device_id].color_temp_kelvin for device_id in self.switches_support_color_temp
-            ) + sum(
-                self.hub.cync_rooms[room_id].color_temp_kelvin for room_id in self.groups_support_color_temp
-            )
-            _color_temp = round(
-                total_color_temp / (len(self.switches_support_color_temp) + len(self.groups_support_color_temp))
-            )
+            total_color_temp = 0
+            count_color_temp = 0
+            for device_id in self.switches_support_color_temp:
+                device_color_temp = self.hub.cync_switches[device_id].color_temp_kelvin
+                if device_color_temp is not None:
+                    total_color_temp += device_color_temp
+                    count_color_temp += 1
+            for room_id in self.groups_support_color_temp:
+                room_color_temp = self.hub.cync_rooms[room_id].color_temp_kelvin
+                if room_color_temp is not None:
+                    total_color_temp += room_color_temp
+                    count_color_temp += 1
+            _color_temp = round(total_color_temp / count_color_temp) if count_color_temp > 0 else 254
+            if _color_temp == 254:
+                _color_temp = None  # No color temperature adjustment
+
         if self.support_rgb:
             count = len(self.switches_support_rgb) + len(self.groups_support_rgb)
-            total_r = sum(
-                self.hub.cync_switches[device_id].rgb['r'] for device_id in self.switches_support_rgb
-            ) + sum(
-                self.hub.cync_rooms[room_id].rgb['r'] for room_id in self.groups_support_rgb
-            )
-            total_g = sum(
-                self.hub.cync_switches[device_id].rgb['g'] for device_id in self.switches_support_rgb
-            ) + sum(
-                self.hub.cync_rooms[room_id].rgb['g'] for room_id in self.groups_support_rgb
-            )
-            total_b = sum(
-                self.hub.cync_switches[device_id].rgb['b'] for device_id in self.switches_support_rgb
-            ) + sum(
-                self.hub.cync_rooms[room_id].rgb['b'] for room_id in self.groups_support_rgb
-            )
-            _rgb['r'] = round(total_r / count)
-            _rgb['g'] = round(total_g / count)
-            _rgb['b'] = round(total_b / count)
-            _rgb['active'] = any(
-                self.hub.cync_switches[device_id].rgb['active'] for device_id in self.switches_support_rgb
-            ) or any(
-                self.hub.cync_rooms[room_id].rgb['active'] for room_id in self.groups_support_rgb
-            )
+            if count > 0:
+                total_r = sum(
+                    self.hub.cync_switches[device_id].rgb['r'] for device_id in self.switches_support_rgb
+                ) + sum(
+                    self.hub.cync_rooms[room_id].rgb['r'] for room_id in self.groups_support_rgb
+                )
+                total_g = sum(
+                    self.hub.cync_switches[device_id].rgb['g'] for device_id in self.switches_support_rgb
+                ) + sum(
+                    self.hub.cync_rooms[room_id].rgb['g'] for room_id in self.groups_support_rgb
+                )
+                total_b = sum(
+                    self.hub.cync_switches[device_id].rgb['b'] for device_id in self.switches_support_rgb
+                ) + sum(
+                    self.hub.cync_rooms[room_id].rgb['b'] for room_id in self.groups_support_rgb
+                )
+                _rgb['r'] = round(total_r / count)
+                _rgb['g'] = round(total_g / count)
+                _rgb['b'] = round(total_b / count)
+                _rgb['active'] = any(
+                    self.hub.cync_switches[device_id].rgb['active'] for device_id in self.switches_support_rgb
+                ) or any(
+                    self.hub.cync_rooms[room_id].rgb['active'] for room_id in self.groups_support_rgb
+                )
 
         if (_power_state != self.power_state or _brightness != self.brightness or
-                _color_temp != self.color_temp_kelvin or _rgb != self.rgb):
+                (_color_temp is not None and _color_temp != self.color_temp_kelvin) or _rgb != self.rgb):
             self.power_state = _power_state
             self.brightness = _brightness
-            self.color_temp_kelvin = _color_temp
+            if _color_temp is not None:
+                self.color_temp_kelvin = _color_temp
             self.rgb = _rgb
             self.publish_update()
             if self._update_callback:
-                self._hass.add_job(self._update_callback)
+                self.hub.loop.call_soon_threadsafe(self._update_callback)
             if self._update_parent_room:
-                self._hass.add_job(self._update_parent_room)
+                self.hub.loop.call_soon_threadsafe(self._update_parent_room)
 
     def publish_update(self):
         if self._update_callback:
-            self._hass.add_job(self._update_callback)
+            self.hub.loop.call_soon_threadsafe(self._update_callback)
 
     def update_controllers(self):
         """Update the list of responsive, Wi-Fi connected controller devices"""
@@ -677,7 +716,6 @@ class CyncRoom:
             for dev_id in connected_devices if dev_id not in self.all_room_switches
         ]
         self.controllers = controllers + others_available if connected_devices else [self.default_controller]
-
 
 class CyncSwitch:
 
@@ -752,15 +790,23 @@ class CyncSwitch:
             else:
                 brightness_percent = self.brightness if self.brightness else 100  # Default to 100% if no brightness is set
 
+            _LOGGER.debug(
+                "Sending turn_on command: state=True, brightness_percent=%s, color_temp_kelvin=%s, rgb_color=%s",
+                brightness_percent, color_temp_kelvin, rgb_color
+            )
+
             # Handle color temperature
             if color_temp_kelvin is not None:
-                # Calculate color_temp as a percentage
-                color_temp = round(
-                    (
-                        (color_temp_kelvin - self.min_color_temp_kelvin) /
-                        (self.max_color_temp_kelvin - self.min_color_temp_kelvin)
-                    ) * 100
-                )
+                if color_temp_kelvin == 254:
+                    color_temp = 254  # Indicates no color temperature adjustment
+                else:
+                    # Calculate color_temp as a percentage
+                    color_temp = round(
+                        (
+                            (color_temp_kelvin - self.min_color_temp_kelvin) /
+                            (self.max_color_temp_kelvin - self.min_color_temp_kelvin)
+                        ) * 100
+                    )
             else:
                 color_temp = 254  # Default value indicating no color temperature adjustment
 
@@ -827,12 +873,14 @@ class CyncSwitch:
         self.update_received = True
 
         if color_temp is not None:
-            # Calculate color_temp_kelvin from color_temp percentage
-            color_temp_kelvin = round(
-                (self.max_color_temp_kelvin - self.min_color_temp_kelvin) *
-                (color_temp / 100) +
-                self.min_color_temp_kelvin
-            )
+            if color_temp == 254:
+                color_temp_kelvin = None  # No color temperature adjustment
+            else:
+                try:
+                    color_temp_kelvin = int(1000000 / color_temp) if color_temp > 0 else None
+                except ZeroDivisionError:
+                    _LOGGER.error("Color temperature value is zero, cannot convert to Kelvin.")
+                    color_temp_kelvin = None
         else:
             color_temp_kelvin = self.color_temp_kelvin
 
@@ -841,19 +889,32 @@ class CyncSwitch:
         else:
             rgb_scaled = self.rgb
 
+        if self.support_brightness and state:
+            new_brightness = brightness
+        elif state:
+            new_brightness = 100  # Default brightness when brightness is not supported
+        else:
+            new_brightness = 0
+
+        # Prevent brightness from being set to 0 when turning on
+        if state and new_brightness == 0:
+            new_brightness = self.brightness if self.brightness else 100
+
         if (self.power_state != state or
-                self.brightness != brightness or
+                self.brightness != new_brightness or
                 self.color_temp_kelvin != color_temp_kelvin or
                 self.rgb != rgb_scaled):
+
             self.power_state = state
-            self.brightness = brightness if self.support_brightness and state else 100 if state else 0
-            self.color_temp_kelvin = color_temp_kelvin
+            self.brightness = new_brightness
+            if color_temp_kelvin is not None:
+                self.color_temp_kelvin = color_temp_kelvin
             self.rgb = rgb_scaled
             self.publish_update()
             if self._update_callback:
-                self._hass.add_job(self._update_callback)
+                self.hub.loop.call_soon_threadsafe(self._update_callback)
             if self._update_parent_room:
-                self._hass.add_job(self._update_parent_room)
+                self.hub.loop.call_soon_threadsafe(self._update_parent_room)
 
     def update_controllers(self):
         """Update the list of responsive, Wi-Fi connected controller devices"""
@@ -869,9 +930,9 @@ class CyncSwitch:
                     if device_id in connected_devices and device_id != self.device_id
                 )
             others_available = [
-                self.hub.cync_switches[device_id].switch_id
-                for device_id in connected_devices
-                if self.hub.cync_switches[device_id].switch_id not in controllers
+                self.hub.cync_switches[dev_id].switch_id
+                for dev_id in connected_devices
+                if self.hub.cync_switches[dev_id].switch_id not in controllers
             ]
             self.controllers = controllers + others_available
         else:
@@ -879,8 +940,7 @@ class CyncSwitch:
 
     def publish_update(self):
         if self._update_callback:
-            self._hass.add_job(self._update_callback)
-
+            self.hub.loop.call_soon_threadsafe(self._update_callback)
 
 class CyncMotionSensor:
 
