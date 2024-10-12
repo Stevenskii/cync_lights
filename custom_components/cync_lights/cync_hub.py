@@ -62,17 +62,20 @@ class CyncHub:
         self.switchID_to_homeID = user_data['cync_config']['switchID_to_homeID']
         self.connected_devices = {home_id: [] for home_id in self.home_controllers.keys()}
         self.shutting_down = False
-        self.cync_rooms = {room_id: CyncRoom(room_id, room_info, self) for room_id, room_info in user_data['cync_config']['rooms'].items()}
+        self.cync_rooms = {
+            room_id: CyncRoom(room_id, room_info, self, hass)
+            for room_id, room_info in user_data['cync_config']['rooms'].items()
+        }
         self.cync_switches = {
-            device_id: CyncSwitch(device_id, switch_info, self.cync_rooms.get(switch_info['room'], None), self)
+            device_id: CyncSwitch(device_id, switch_info, self.cync_rooms.get(switch_info['room'], None), self, hass)
             for device_id, switch_info in user_data['cync_config']['devices'].items() if switch_info.get("ONOFF", False)
         }
         self.cync_motion_sensors = {
-            device_id: CyncMotionSensor(device_id, device_info, self.cync_rooms.get(device_info['room'], None))
+            device_id: CyncMotionSensor(device_id, device_info, self.cync_rooms.get(device_info['room'], None), self, hass)
             for device_id, device_info in user_data['cync_config']['devices'].items() if device_info.get("MOTION", False)
         }
         self.cync_ambient_light_sensors = {
-            device_id: CyncAmbientLightSensor(device_id, device_info, self.cync_rooms.get(device_info['room'], None))
+            device_id: CyncAmbientLightSensor(device_id, device_info, self.cync_rooms.get(device_info['room'], None), self, hass)
             for device_id, device_info in user_data['cync_config']['devices'].items() if device_info.get("AMBIENT_LIGHT", False)
         }
         self.switchID_to_deviceIDs = {
@@ -822,7 +825,8 @@ class CyncSwitch:
                 rgb_values = (0, 0, 0)  # Default RGB values
 
             # Use combo_control to turn on the light
-            self.hub.combo_control(True, brightness_percent, color_temp, rgb_values, controller, self.mesh_id, seq)
+            self.
+            .combo_control(True, brightness_percent, color_temp, rgb_values, controller, self.mesh_id, seq)
 
             # Handle effects, flash, and transition if supported
             if effect:
@@ -978,7 +982,10 @@ class CyncMotionSensor:
 
     def publish_update(self):
         if self._update_callback:
-            self._hass.add_job(self._update_callback)
+            asyncio.run_coroutine_threadsafe(
+                self._update_callback(),
+                self._hass.loop
+            )
 
 
 class CyncAmbientLightSensor:
@@ -1008,7 +1015,10 @@ class CyncAmbientLightSensor:
 
     def publish_update(self):
         if self._update_callback:
-            self._hass.add_job(self._update_callback)
+            asyncio.run_coroutine_threadsafe(
+                self._update_callback(),
+                self._hass.loop
+            )
 
 
 class CyncUserData:
