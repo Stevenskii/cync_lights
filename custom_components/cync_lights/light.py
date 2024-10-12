@@ -212,10 +212,6 @@ class CyncSwitchEntity(LightEntity):
         if effect == "None":
             effect = None
 
-        # Preserve current brightness if not specified
-        if brightness is None:
-            brightness = self.brightness if self.brightness else 255  # Default to previous brightness or max
-
         try:
             await self.cync_switch.turn_on(
                 brightness=brightness,
