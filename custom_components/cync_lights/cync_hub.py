@@ -1,4 +1,3 @@
-# cync_hub.py
 import logging
 import threading
 import asyncio
@@ -704,7 +703,11 @@ class CyncRoom:
 
     def publish_update(self):
         if self._update_callback:
-            self.hub.loop.call_soon_threadsafe(self._update_callback)
+            asyncio.run_coroutine_threadsafe(
+                self._update_callback(),
+                self._hass.loop
+            )
+
 
     def update_controllers(self):
         """Update the list of responsive, Wi-Fi connected controller devices"""
@@ -942,7 +945,11 @@ class CyncSwitch:
 
     def publish_update(self):
         if self._update_callback:
-            self.hub.loop.call_soon_threadsafe(self._update_callback)
+            asyncio.run_coroutine_threadsafe(
+                self._update_callback(),
+                self._hass.loop
+            )
+
 
 class CyncMotionSensor:
 
