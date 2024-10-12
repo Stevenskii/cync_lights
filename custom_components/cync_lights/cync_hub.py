@@ -732,6 +732,29 @@ class CyncSwitch:
         self._command_timeout = 0.5
         self._command_retry_time = 5
 
+    def register(self, update_callback, hass) -> None:
+        """Register callback, called when switch changes state."""
+        self._update_callback = update_callback
+        self._hass = hass
+
+    def reset(self) -> None:
+        """Remove previously registered callback."""
+        self._update_callback = None
+        self._hass = None
+
+    def register_room_updater(self, parent_updater):
+        self._update_parent_room = parent_updater
+
+    @property
+    def max_color_temp_kelvin(self) -> int:
+        """Return maximum supported color temperature in Kelvin."""
+        return 7000  # Adjust according to your devices' specifications
+
+    @property
+    def min_color_temp_kelvin(self) -> int:
+        """Return minimum supported color temperature in Kelvin."""
+        return 2000  # Adjust according to your devices' specifications
+
     async def turn_on(
         self,
         rgb_color: Optional[Tuple[int, int, int]] = None,
