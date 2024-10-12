@@ -742,14 +742,14 @@ class CyncSwitch:
         """Turn on the light with optional brightness, color, and effects."""
         attempts = 0
         update_received = False
-    
-        # Convert Home Assistant brightness (0-255) to Cync's brightness scale (0-100)
+
+        # Ensure brightness is correctly scaled from Home Assistant's range (0-255) to Cync's range (0-100)
         if brightness is not None:
-            brightness_percent = round(brightness * 100 / 255)
+            brightness_percent = max(1, round(brightness * 100 / 255))  # Ensure it doesn't drop below 1
         else:
             # If brightness isn't passed, use the current brightness value or default to 100
             brightness_percent = self.brightness if self.brightness else 100
-    
+
         # Handle color temperature adjustment
         if color_temp_kelvin is not None:
             color_temp = round(
@@ -760,20 +760,20 @@ class CyncSwitch:
             )
         else:
             color_temp = 254  # Default value if color temperature is not provided
-    
+
         # Retain current RGB values if no new color is passed, to avoid resetting it
         if rgb_color is None:
             rgb_values = (self.rgb['r'], self.rgb['g'], self.rgb['b']) if self.rgb['active'] else (0, 0, 0)
         else:
             rgb_values = tuple(int(x) for x in rgb_color)
-    
+
         while not update_received and attempts < int(self._command_retry_time / self._command_timeout):
             seq = str(self.hub.get_seq_num())
             controller = self.controllers[attempts % len(self.controllers)] if self.controllers else self.default_controller
-    
+
             # Send command to adjust brightness, color temp, and RGB while turning on the light
             self.hub.combo_control(True, brightness_percent, color_temp, rgb_values, controller, self.mesh_id, seq)
-    
+
             # Handle effects, flash, and transition if supported
             if effect:
                 self.hub.set_effect(effect, controller, self.mesh_id, seq)
@@ -781,10 +781,10 @@ class CyncSwitch:
                 self.hub.set_flash(flash, controller, self.mesh_id, seq)
             if transition:
                 self.hub.set_transition(transition, controller, self.mesh_id, seq)
-    
+
             self.hub.pending_commands[seq] = self.command_received
             await asyncio.sleep(self._command_timeout)
-    
+
             if self.hub.pending_commands.get(seq) is not None:
                 self.hub.pending_commands.pop(seq)
                 attempts += 1
