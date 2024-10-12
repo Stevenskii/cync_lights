@@ -35,6 +35,7 @@ Capabilities = {
     "RGB": [6, 7, 8, 21, 22, 23, 30, 31, 32, 33, 34, 35, 131, 132, 133, 137, 138, 139,
             140, 141, 142, 143, 146, 147, 153, 154, 155, 156, 158, 159, 160, 161, 162,
             163, 164, 165, 169, 170],
+    "RGBWW": [146],
     "MOTION": [37, 49, 54],
     "AMBIENT_LIGHT": [37, 49, 54],
     "WIFICONTROL": [36, 37, 38, 39, 40, 48, 49, 51, 52, 53, 54, 55, 56, 57, 58, 59, 61,
@@ -346,10 +347,31 @@ class CyncHub:
             await self.writer.drain()
         self.loop.create_task(send())
 
-    def combo_control(self, state, brightness, color_tone, rgb, switch_id, mesh_id, seq):
-        """Send combo control command to adjust state, brightness, color temperature, and RGB."""
-        rgb_values = rgb
-        checksum = (496 + int(mesh_id[0]) + int(mesh_id[1]) + (1 if state else 0) + brightness + color_tone + sum(rgb_values)) % 256
+    def combo_control(self, state, brightness, color_tone, rgb, switch_id, mesh_id, seq, is_rgbww=False):
+    """Send combo control command to adjust state, brightness, color temperature, and RGB/RGBWW."""
+    rgb_values = rgb
+    checksum = (496 + int(mesh_id[0]) + int(mesh_id[1]) + (1 if state else 0) + brightness + color_tone + sum(rgb_values)) % 256
+
+    if is_rgbww:
+        # Different command structure for RGBWW lights
+        combo_request = (
+            bytes.fromhex('7300000024') +
+            int(switch_id).to_bytes(4, 'big') +
+            int(seq).to_bytes(2, 'big') +
+            bytes.fromhex('007e00000000f8f010000000000000') +
+            mesh_id +
+            bytes.fromhex('f10000') +  # Different command byte for RGBWW
+            (1 if state else 0).to_bytes(1, 'big') +
+            brightness.to_bytes(1, 'big') +
+            color_tone.to_bytes(1, 'big') +
+            rgb_values[0].to_bytes(1, 'big') +
+            rgb_values[1].to_bytes(1, 'big') +
+            rgb_values[2].to_bytes(1, 'big') +
+            checksum.to_bytes(1, 'big') +
+            bytes.fromhex('7e')
+        )
+    else:
+        # Default command for RGB lights
         combo_request = (
             bytes.fromhex('7300000022') +
             int(switch_id).to_bytes(4, 'big') +
@@ -366,7 +388,8 @@ class CyncHub:
             checksum.to_bytes(1, 'big') +
             bytes.fromhex('7e')
         )
-        self.loop.call_soon_threadsafe(self.send_request, combo_request)
+    
+    self.loop.call_soon_threadsafe(self.send_request, combo_request)
 
     def turn_on(self, switch_id, mesh_id, seq):
         power_request = bytes.fromhex('730000001f') + int(switch_id).to_bytes(4, 'big') + int(seq).to_bytes(2, 'big') + \
@@ -694,6 +717,7 @@ class CyncSwitch:
         self.brightness = 0
         self.color_temp_kelvin = 0
         self.rgb = {'r': 0, 'g': 0, 'b': 0, 'active': False}
+        self.rgbww = {'r': 0, 'g': 0, 'b': 0, 'w': 0, 'ww': 0, 'active': False}  # Add RGBWW support
         self.default_controller = switch_info.get('switch_controller', self.hub.home_controllers[self.home_id][0])
         self.controllers: List[str] = []
         self._update_callback: Optional[Callable[[], None]] = None
@@ -701,38 +725,17 @@ class CyncSwitch:
         self.support_brightness = switch_info.get('BRIGHTNESS', False)
         self.support_color_temp = switch_info.get('COLORTEMP', False)
         self.support_rgb = switch_info.get('RGB', False)
+        self.support_rgbww = switch_info.get('RGBWW', False)  # Add capability check for RGBWW
         self.plug = switch_info.get('PLUG', False)
         self.fan = switch_info.get('FAN', False)
         self.elements = switch_info.get('MULTIELEMENT', 1)
         self._command_timeout = 0.5
         self._command_retry_time = 5
 
-    def register(self, update_callback, hass) -> None:
-        """Register callback, called when switch changes state."""
-        self._update_callback = update_callback
-        self._hass = hass
-
-    def reset(self) -> None:
-        """Remove previously registered callback."""
-        self._update_callback = None
-        self._hass = None
-
-    def register_room_updater(self, parent_updater):
-        self._update_parent_room = parent_updater
-
-    @property
-    def max_color_temp_kelvin(self) -> int:
-        """Return maximum supported color temperature in Kelvin."""
-        return 7000  # Adjust according to your devices' specifications
-
-    @property
-    def min_color_temp_kelvin(self) -> int:
-        """Return minimum supported color temperature in Kelvin."""
-        return 2000  # Adjust according to your devices' specifications
-
     async def turn_on(
         self,
         rgb_color: Optional[Tuple[int, int, int]] = None,
+        rgbww_color: Optional[Tuple[int, int, int, int, int]] = None,  # Add RGBWW support
         brightness: Optional[int] = None,
         color_temp_kelvin: Optional[int] = None,
         effect: Optional[str] = None,
@@ -742,14 +745,14 @@ class CyncSwitch:
         """Turn on the light with optional brightness, color, and effects."""
         attempts = 0
         update_received = False
-
-        # Ensure brightness is correctly scaled from Home Assistant's range (0-255) to Cync's range (0-100)
+    
+        # Convert Home Assistant brightness (0-255) to Cync's brightness scale (0-100)
         if brightness is not None:
-            brightness_percent = max(1, round(brightness * 100 / 255))  # Ensure it doesn't drop below 1
+            brightness_percent = round(brightness * 100 / 255)
         else:
             # If brightness isn't passed, use the current brightness value or default to 100
             brightness_percent = self.brightness if self.brightness else 100
-
+    
         # Handle color temperature adjustment
         if color_temp_kelvin is not None:
             color_temp = round(
@@ -760,20 +763,27 @@ class CyncSwitch:
             )
         else:
             color_temp = 254  # Default value if color temperature is not provided
-
-        # Retain current RGB values if no new color is passed, to avoid resetting it
-        if rgb_color is None:
+    
+        # Handle RGBWW or RGB based on capability
+        if self.support_rgbww and rgbww_color is not None:
+            rgbww_values = tuple(int(x) for x in rgbww_color)
+        elif rgb_color is None:
+            # Retain current RGB values if no new color is passed, to avoid resetting it
             rgb_values = (self.rgb['r'], self.rgb['g'], self.rgb['b']) if self.rgb['active'] else (0, 0, 0)
         else:
             rgb_values = tuple(int(x) for x in rgb_color)
-
+    
         while not update_received and attempts < int(self._command_retry_time / self._command_timeout):
             seq = str(self.hub.get_seq_num())
             controller = self.controllers[attempts % len(self.controllers)] if self.controllers else self.default_controller
 
-            # Send command to adjust brightness, color temp, and RGB while turning on the light
-            self.hub.combo_control(True, brightness_percent, color_temp, rgb_values, controller, self.mesh_id, seq)
-
+            if self.support_rgbww:
+                # Send command for RGBWW lights
+                self.hub.combo_control(True, brightness_percent, color_temp, rgbww_values, controller, self.mesh_id, seq)
+            else:
+                # Send command for RGB lights
+                self.hub.combo_control(True, brightness_percent, color_temp, rgb_values, controller, self.mesh_id, seq)
+    
             # Handle effects, flash, and transition if supported
             if effect:
                 self.hub.set_effect(effect, controller, self.mesh_id, seq)
@@ -781,10 +791,10 @@ class CyncSwitch:
                 self.hub.set_flash(flash, controller, self.mesh_id, seq)
             if transition:
                 self.hub.set_transition(transition, controller, self.mesh_id, seq)
-
+    
             self.hub.pending_commands[seq] = self.command_received
             await asyncio.sleep(self._command_timeout)
-
+    
             if self.hub.pending_commands.get(seq) is not None:
                 self.hub.pending_commands.pop(seq)
                 attempts += 1
@@ -824,12 +834,12 @@ class CyncSwitch:
         """Remove command from hub.pending_commands when a reply is received from Cync server"""
         self.hub.pending_commands.pop(seq, None)
 
-    def update_switch(self, state, brightness, color_temp=None, rgb=None):
+    def update_switch(self, state, brightness, color_temp=None, rgb=None, rgbww=None):
         """Update the state of the switch as updates are received from the Cync server."""
         self.update_received = True
     
+        # Handle color temperature updates
         if color_temp is not None:
-            # Calculate color_temp_kelvin from color_temp percentage
             color_temp_kelvin = round(
                 (self.max_color_temp_kelvin - self.min_color_temp_kelvin) *
                 (color_temp / 100) +
@@ -838,30 +848,34 @@ class CyncSwitch:
         else:
             color_temp_kelvin = self.color_temp_kelvin
     
-        if rgb is not None:
+        # Handle RGBWW or RGB updates
+        if self.support_rgbww and rgbww is not None:
+            rgbww_scaled = rgbww  # RGBWW is already scaled in the packet parsing
+        elif rgb is not None:
             rgb_scaled = rgb  # RGB is already scaled in the packet parsing
         else:
             rgb_scaled = self.rgb
     
-        # Use the brightness provided by Cync (0-100) directly
+        # Update brightness
         if brightness is not None:
             self.brightness = brightness
-        else:
-            self.brightness = self.brightness
     
         if (self.power_state != state or
                 self.brightness != brightness or
                 self.color_temp_kelvin != color_temp_kelvin or
-                self.rgb != rgb_scaled):
+                (self.support_rgbww and self.rgbww != rgbww_scaled) or
+                (not self.support_rgbww and self.rgb != rgb_scaled)):
             self.power_state = state
             self.color_temp_kelvin = color_temp_kelvin
-            self.rgb = rgb_scaled
+            if self.support_rgbww:
+                self.rgbww = rgbww_scaled
+            else:
+                self.rgb = rgb_scaled
             self.publish_update()
             if self._update_callback:
                 self._hass.add_job(self._update_callback)
             if self._update_parent_room:
                 self._hass.add_job(self._update_parent_room)
-
 
     def update_controllers(self):
         """Update the list of responsive, Wi-Fi connected controller devices"""
