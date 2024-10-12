@@ -16,7 +16,7 @@ PLATFORMS: list[str] = ["light", "binary_sensor", "switch", "fan"]
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Cync Room Lights from a config entry."""
     hass.data.setdefault(DOMAIN, {})
-    hub = CyncHub(entry.data, entry.options)
+    hub = CyncHub(entry.data, entry.options, hass)
     hass.data[DOMAIN][entry.entry_id] = hub
     hub.start_tcp_client()
 
