@@ -699,10 +699,6 @@ class CyncRoom:
                 self.color_temp_kelvin = _color_temp
             self.rgb = _rgb
             self.publish_update()
-            if self._update_callback:
-                self.hub.loop.call_soon_threadsafe(self._update_callback)
-            if self._update_parent_room:
-                self.hub.loop.call_soon_threadsafe(self._update_parent_room)
 
     def publish_update(self):
         if self._update_callback:
@@ -763,7 +759,7 @@ class CyncSwitch:
         self._update_callback = None
         self._hass = None
 
-    def register_room_updater(self, parent_updater):
+    def register_room_updater(self, parent_updater, hass):
         self._update_parent_room = parent_updater
 
     @property
@@ -920,10 +916,6 @@ class CyncSwitch:
                 self.color_temp_kelvin = color_temp_kelvin
             self.rgb = rgb_scaled
             self.publish_update()
-            if self._update_callback:
-                self.hub.loop.call_soon_threadsafe(self._update_callback)
-            if self._update_parent_room:
-                self.hub.loop.call_soon_threadsafe(self._update_parent_room)
 
     def update_controllers(self):
         """Update the list of responsive, Wi-Fi connected controller devices"""
