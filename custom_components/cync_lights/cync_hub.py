@@ -124,32 +124,30 @@ class CyncHub:
             try:
                 context = ssl.create_default_context()
                 try:
-                    self.reader, self.writer = await asyncio.open_connection('cm.gelighting.com', 23779, ssl = context)
-                except Exception as e:
+                    self.reader, self.writer = await asyncio.open_connection('cm.gelighting.com', 23779, ssl=context)
+                except Exception:
                     context.check_hostname = False
                     context.verify_mode = ssl.CERT_NONE
                     try:
-                        self.reader, self.writer = await asyncio.open_connection('cm.gelighting.com', 23779, ssl = context)
-                    except Exception as e:
+                        self.reader, self.writer = await asyncio.open_connection('cm.gelighting.com', 23779, ssl=context)
+                    except Exception:
                         self.reader, self.writer = await asyncio.open_connection('cm.gelighting.com', 23778)
             except Exception as e:
-                _LOGGER.error(str(type(e).__name__) + ": " + str(e))
+                _LOGGER.error(f"{type(e).__name__}: {e}")
                 await asyncio.sleep(5)
             else:
-                read_tcp_messages = asyncio.create_task(self._read_tcp_messages(), name = "Read TCP Messages")
-                maintain_connection = asyncio.create_task(self._maintain_connection(), name = "Maintain Connection")
-                update_state = asyncio.create_task(self._update_state(), name = "Update State")
-                update_connected_devices = asyncio.create_task(self._update_connected_devices(), name = "Update Connected Devices")
+                read_tcp_messages = asyncio.create_task(self._read_tcp_messages(), name="Read TCP Messages")
+                maintain_connection = asyncio.create_task(self._maintain_connection(), name="Maintain Connection")
+                update_state = asyncio.create_task(self._update_state(), name="Update State")
+                update_connected_devices = asyncio.create_task(self._update_connected_devices(), name="Update Connected Devices")
                 read_write_tasks = [read_tcp_messages, maintain_connection, update_state, update_connected_devices]
                 try:
-                    done, pending = await asyncio.wait(read_write_tasks,return_when=asyncio.FIRST_EXCEPTION)
+                    done, pending = await asyncio.wait(read_write_tasks, return_when=asyncio.FIRST_EXCEPTION)
                     for task in done:
-                        name = task.get_name()
-                        exception = task.exception()
                         try:
                             result = task.result()
                         except Exception as e:
-                            _LOGGER.error(str(type(e).__name__) + ": " + str(e))
+                            _LOGGER.error(f"{type(e).__name__}: {e}")
                     for task in pending:
                         task.cancel()
                     if not self.shutting_down:
@@ -158,8 +156,7 @@ class CyncHub:
                     else:
                         _LOGGER.debug("Cync client shutting down")
                 except Exception as e:
-                    _LOGGER.error(str(type(e).__name__) + ": " + str(e))
-
+                    _LOGGER.error(f"{type(e).__name__}: {e}")
 
     async def _read_tcp_messages(self):
         self.writer.write(self.login_code)
