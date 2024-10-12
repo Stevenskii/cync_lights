@@ -1,3 +1,4 @@
+# cync_hub.py
 import logging
 import threading
 import asyncio
@@ -108,7 +109,8 @@ class CyncHub:
     def _start_tcp_client(self):
         self.loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self.loop)
-        self.loop.run_until_complete(self._connect())
+        self.loop.call_soon_threadsafe(self.loop.create_task, self._connect())
+        self.loop.run_forever()
 
     def disconnect(self):
         self.shutting_down = True
@@ -119,6 +121,7 @@ class CyncHub:
                 self.loop.call_soon_threadsafe(self.send_request, state_request)
 
     async def _connect(self):
+        """Establish a connection to the server."""
         while not self.shutting_down:
             try:
                 context = ssl.create_default_context()
@@ -686,15 +689,8 @@ class CyncRoom:
                     self.hub.cync_rooms[room_id].rgb['active'] for room_id in self.groups_support_rgb
                 )
 
-        # Determine if any state has changed
-        state_changed = (
-            _power_state != self.power_state or
-            _brightness != self.brightness or
-            (_color_temp is not None and _color_temp != self.color_temp_kelvin) or
-            _rgb != self.rgb
-        )
-
-        if state_changed:
+        if (_power_state != self.power_state or _brightness != self.brightness or
+                (_color_temp is not None and _color_temp != self.color_temp_kelvin) or _rgb != self.rgb):
             self.power_state = _power_state
             self.brightness = _brightness
             if _color_temp is not None:
@@ -702,23 +698,13 @@ class CyncRoom:
             self.rgb = _rgb
             self.publish_update()
             if self._update_callback:
-                # Schedule the async callback safely using run_coroutine_threadsafe
-                asyncio.run_coroutine_threadsafe(
-                    self._update_callback(),
-                    self.hub.loop
-                )
+                self.hub.loop.call_soon_threadsafe(self._update_callback)
             if self._update_parent_room:
-                asyncio.run_coroutine_threadsafe(
-                    self._update_parent_room(),
-                    self.hub.loop
-                )
+                self.hub.loop.call_soon_threadsafe(self._update_parent_room)
 
     def publish_update(self):
         if self._update_callback:
-            asyncio.run_coroutine_threadsafe(
-                self._update_callback(),
-                self.hub.loop
-            )
+            self.hub.loop.call_soon_threadsafe(self._update_callback)
 
     def update_controllers(self):
         """Update the list of responsive, Wi-Fi connected controller devices"""
@@ -928,16 +914,9 @@ class CyncSwitch:
             self.rgb = rgb_scaled
             self.publish_update()
             if self._update_callback:
-                # Schedule the async callback safely using run_coroutine_threadsafe
-                asyncio.run_coroutine_threadsafe(
-                    self._update_callback(),
-                    self.hub.loop
-                )
+                self.hub.loop.call_soon_threadsafe(self._update_callback)
             if self._update_parent_room:
-                asyncio.run_coroutine_threadsafe(
-                    self._update_parent_room(),
-                    self.hub.loop
-                )
+                self.hub.loop.call_soon_threadsafe(self._update_parent_room)
 
     def update_controllers(self):
         """Update the list of responsive, Wi-Fi connected controller devices"""
@@ -963,10 +942,7 @@ class CyncSwitch:
 
     def publish_update(self):
         if self._update_callback:
-            asyncio.run_coroutine_threadsafe(
-                self._update_callback(),
-                self.hub.loop
-            )
+            self.hub.loop.call_soon_threadsafe(self._update_callback)
 
 class CyncMotionSensor:
 
@@ -995,10 +971,8 @@ class CyncMotionSensor:
 
     def publish_update(self):
         if self._update_callback:
-            asyncio.run_coroutine_threadsafe(
-                self._update_callback(),
-                self._hass.loop  # Assuming self._hass.loop is available
-            )
+            self._hass.add_job(self._update_callback)
+
 
 class CyncAmbientLightSensor:
 
@@ -1027,10 +1001,8 @@ class CyncAmbientLightSensor:
 
     def publish_update(self):
         if self._update_callback:
-            asyncio.run_coroutine_threadsafe(
-                self._update_callback(),
-                self._hass.loop  # Assuming self._hass.loop is available
-            )
+            self._hass.add_job(self._update_callback)
+
 
 class CyncUserData:
     """Class to handle user authentication and data retrieval."""
