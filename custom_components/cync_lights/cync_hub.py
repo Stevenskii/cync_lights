@@ -106,8 +106,9 @@ class CyncHub:
         return effect_mapping
 
     def start_tcp_client(self):
-        self.thread = threading.Thread(target=self._start_tcp_client, daemon=True)
-        self.thread.start()
+        """Start the TCP client using asyncio tasks instead of threads."""
+        self.loop = asyncio.get_event_loop()
+        self.loop.create_task(self._connect())  # Launch the connection task asynchronously
 
     def _start_tcp_client(self):
         self.loop = asyncio.new_event_loop()
