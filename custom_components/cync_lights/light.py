@@ -130,7 +130,9 @@ class CyncSwitchEntity(LightEntity):
     @property
     def brightness(self) -> int | None:
         """Return the brightness of this switch between 0..255."""
+        if self.cync_switch.brightness is not None:
             return round(self.cync_switch.brightness * 255 / 100)
+        return None
 
     @property
     def color_temp(self) -> int | None:
@@ -209,6 +211,10 @@ class CyncSwitchEntity(LightEntity):
         # Handle effect "None" to stop any active effect
         if effect == "None":
             effect = None
+
+        # Preserve current brightness if not specified
+        if brightness is None:
+            brightness = self.brightness if self.brightness else 255  # Default to previous brightness or max
 
         try:
             await self.cync_switch.turn_on(
