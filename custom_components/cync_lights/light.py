@@ -240,9 +240,14 @@ class CyncSwitchEntity(LightEntity):
         if effect == "None":
             effect = None
 
+        # Handle the conversion of brightness properly
+        brightness_percent = None
+        if brightness is not None:
+            brightness_percent = round(brightness * 100 / 255)
+
         try:
             await self.cync_switch.turn_on(
-                brightness=brightness,
+                brightness=brightness_percent,
                 color_temp_kelvin=color_temp_kelvin,
                 rgb_color=rgb_color,
                 rgbw_color=rgbw_color,
@@ -262,3 +267,4 @@ class CyncSwitchEntity(LightEntity):
             await self.cync_switch.turn_off(flash=flash, transition=transition)
         except Exception as e:
             _LOGGER.error("Error turning off light %s: %s", self.name, e)
+
