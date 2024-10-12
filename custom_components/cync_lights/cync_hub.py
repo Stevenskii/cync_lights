@@ -745,13 +745,14 @@ class CyncSwitch:
         while not update_received and attempts < int(self._command_retry_time / self._command_timeout):
             seq = str(self.hub.get_seq_num())
             controller = self.controllers[attempts % len(self.controllers)] if self.controllers else self.default_controller
-
-            # Handle brightness
+    
+            # Convert Home Assistant brightness (0-255) to Cync's brightness scale (0-100)
             if brightness is not None:
                 brightness_percent = round(brightness * 100 / 255)
             else:
-                brightness_percent = self.brightness if self.brightness else 100  # Default to 100% if no brightness is set
-
+                # Use stored brightness or default to 100%
+                brightness_percent = self.brightness if self.brightness else 100
+    
             # Handle color temperature
             if color_temp_kelvin is not None:
                 # Calculate color_temp as a percentage
@@ -763,16 +764,16 @@ class CyncSwitch:
                 )
             else:
                 color_temp = 254  # Default value indicating no color temperature adjustment
-
+    
             # Handle RGB
             if rgb_color is not None:
                 rgb_values = tuple(int(x) for x in rgb_color)
             else:
                 rgb_values = (0, 0, 0)  # Default RGB values
-
-            # Use combo_control to turn on the light
+    
+            # Use combo_control to turn on the light with the converted brightness
             self.hub.combo_control(True, brightness_percent, color_temp, rgb_values, controller, self.mesh_id, seq)
-
+    
             # Handle effects, flash, and transition if supported
             if effect:
                 self.hub.set_effect(effect, controller, self.mesh_id, seq)
@@ -780,7 +781,7 @@ class CyncSwitch:
                 self.hub.set_flash(flash, controller, self.mesh_id, seq)
             if transition:
                 self.hub.set_transition(transition, controller, self.mesh_id, seq)
-
+    
             self.hub.pending_commands[seq] = self.command_received
             await asyncio.sleep(self._command_timeout)
             if self.hub.pending_commands.get(seq) is not None:
@@ -825,7 +826,7 @@ class CyncSwitch:
     def update_switch(self, state, brightness, color_temp=None, rgb=None):
         """Update the state of the switch as updates are received from the Cync server."""
         self.update_received = True
-
+    
         if color_temp is not None:
             # Calculate color_temp_kelvin from color_temp percentage
             color_temp_kelvin = round(
@@ -835,18 +836,23 @@ class CyncSwitch:
             )
         else:
             color_temp_kelvin = self.color_temp_kelvin
-
+    
         if rgb is not None:
             rgb_scaled = rgb  # RGB is already scaled in the packet parsing
         else:
             rgb_scaled = self.rgb
-
+    
+        # Use the brightness provided by Cync (0-100) directly
+        if brightness is not None:
+            self.brightness = brightness
+        else:
+            self.brightness = self.brightness
+    
         if (self.power_state != state or
                 self.brightness != brightness or
                 self.color_temp_kelvin != color_temp_kelvin or
                 self.rgb != rgb_scaled):
             self.power_state = state
-            self.brightness = brightness if self.support_brightness and state else 100 if state else 0
             self.color_temp_kelvin = color_temp_kelvin
             self.rgb = rgb_scaled
             self.publish_update()
@@ -854,6 +860,7 @@ class CyncSwitch:
                 self._hass.add_job(self._update_callback)
             if self._update_parent_room:
                 self._hass.add_job(self._update_parent_room)
+
 
     def update_controllers(self):
         """Update the list of responsive, Wi-Fi connected controller devices"""
