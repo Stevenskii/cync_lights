@@ -349,47 +349,47 @@ class CyncHub:
 
     def combo_control(self, state, brightness, color_tone, rgb, switch_id, mesh_id, seq, is_rgbww=False):
     """Send combo control command to adjust state, brightness, color temperature, and RGB/RGBWW."""
-    rgb_values = rgb
-    checksum = (496 + int(mesh_id[0]) + int(mesh_id[1]) + (1 if state else 0) + brightness + color_tone + sum(rgb_values)) % 256
-
-    if is_rgbww:
-        # Different command structure for RGBWW lights
-        combo_request = (
-            bytes.fromhex('7300000024') +
-            int(switch_id).to_bytes(4, 'big') +
-            int(seq).to_bytes(2, 'big') +
-            bytes.fromhex('007e00000000f8f010000000000000') +
-            mesh_id +
-            bytes.fromhex('f10000') +  # Different command byte for RGBWW
-            (1 if state else 0).to_bytes(1, 'big') +
-            brightness.to_bytes(1, 'big') +
-            color_tone.to_bytes(1, 'big') +
-            rgb_values[0].to_bytes(1, 'big') +
-            rgb_values[1].to_bytes(1, 'big') +
-            rgb_values[2].to_bytes(1, 'big') +
-            checksum.to_bytes(1, 'big') +
-            bytes.fromhex('7e')
-        )
-    else:
-        # Default command for RGB lights
-        combo_request = (
-            bytes.fromhex('7300000022') +
-            int(switch_id).to_bytes(4, 'big') +
-            int(seq).to_bytes(2, 'big') +
-            bytes.fromhex('007e00000000f8f010000000000000') +
-            mesh_id +
-            bytes.fromhex('f00000') +
-            (1 if state else 0).to_bytes(1, 'big') +
-            brightness.to_bytes(1, 'big') +
-            color_tone.to_bytes(1, 'big') +
-            rgb_values[0].to_bytes(1, 'big') +
-            rgb_values[1].to_bytes(1, 'big') +
-            rgb_values[2].to_bytes(1, 'big') +
-            checksum.to_bytes(1, 'big') +
-            bytes.fromhex('7e')
-        )
+        rgb_values = rgb
+        checksum = (496 + int(mesh_id[0]) + int(mesh_id[1]) + (1 if state else 0) + brightness + color_tone + sum(rgb_values)) % 256
     
-    self.loop.call_soon_threadsafe(self.send_request, combo_request)
+        if is_rgbww:
+            # Different command structure for RGBWW lights
+            combo_request = (
+                bytes.fromhex('7300000024') +
+                int(switch_id).to_bytes(4, 'big') +
+                int(seq).to_bytes(2, 'big') +
+                bytes.fromhex('007e00000000f8f010000000000000') +
+                mesh_id +
+                bytes.fromhex('f10000') +  # Different command byte for RGBWW
+                (1 if state else 0).to_bytes(1, 'big') +
+                brightness.to_bytes(1, 'big') +
+                color_tone.to_bytes(1, 'big') +
+                rgb_values[0].to_bytes(1, 'big') +
+                rgb_values[1].to_bytes(1, 'big') +
+                rgb_values[2].to_bytes(1, 'big') +
+                checksum.to_bytes(1, 'big') +
+                bytes.fromhex('7e')
+            )
+        else:
+            # Default command for RGB lights
+            combo_request = (
+                bytes.fromhex('7300000022') +
+                int(switch_id).to_bytes(4, 'big') +
+                int(seq).to_bytes(2, 'big') +
+                bytes.fromhex('007e00000000f8f010000000000000') +
+                mesh_id +
+                bytes.fromhex('f00000') +
+                (1 if state else 0).to_bytes(1, 'big') +
+                brightness.to_bytes(1, 'big') +
+                color_tone.to_bytes(1, 'big') +
+                rgb_values[0].to_bytes(1, 'big') +
+                rgb_values[1].to_bytes(1, 'big') +
+                rgb_values[2].to_bytes(1, 'big') +
+                checksum.to_bytes(1, 'big') +
+                bytes.fromhex('7e')
+            )
+        
+        self.loop.call_soon_threadsafe(self.send_request, combo_request)
 
     def turn_on(self, switch_id, mesh_id, seq):
         power_request = bytes.fromhex('730000001f') + int(switch_id).to_bytes(4, 'big') + int(seq).to_bytes(2, 'big') + \
