@@ -454,7 +454,7 @@ class CyncHub:
 
 class CyncRoom:
 
-    def __init__(self, room_id, room_info, hub, hass) -> None:
+    def __init__(self, room_id: str, room_info: Dict[str, Any], hub: CyncHub, hass: HomeAssistant) -> None:
         """Initialize the Cync Room."""
         self.hub = hub
         self._hass = hass
@@ -516,8 +516,10 @@ class CyncRoom:
         """Remove previously registered callback."""
         self._update_callback = None
 
-    def register_room_updater(self, parent_updater):
+    def register_room_updater(self, parent_updater: Callable[[], None]) -> None:
+        """Register the parent room updater callback."""
         self._update_parent_room = parent_updater
+
 
     @property
     def max_color_temp_kelvin(self) -> int:
@@ -725,12 +727,16 @@ class CyncRoom:
 
 class CyncSwitch:
 
-    def __init__(self, device_id, switch_info, room, hub):
+    def __init__(self, device_id: str, switch_info: Dict[str, Any], room: Optional[CyncRoom], hub: CyncHub, hass: HomeAssistant) -> None:
+        """Initialize the Cync Switch."""
         self.hub = hub
         self._hass = hass
         self.device_id = device_id
         self.switch_id = switch_info.get('switch_id', '0')
-        self.home_id = [home_id for home_id, home_devices in self.hub.home_devices.items() if self.device_id in home_devices][0]
+        self.home_id = [
+            home_id for home_id, home_devices in self.hub.home_devices.items()
+            if self.device_id in home_devices
+        ][0]
         self.name = switch_info.get('name', 'unknown')
         self.home_name = switch_info.get('home_name', 'unknown')
         self.mesh_id = switch_info.get('mesh_id', 0).to_bytes(2, 'little')
@@ -752,7 +758,7 @@ class CyncSwitch:
         self._command_timeout = 0.5
         self._command_retry_time = 5
 
-    def register(self, update_callback, hass) -> None:
+    def register(self, update_callback: Callable[[], None], hass: HomeAssistant) -> None:
         """Register callback, called when switch changes state."""
         self._update_callback = update_callback
         self._hass = hass
@@ -762,7 +768,8 @@ class CyncSwitch:
         self._update_callback = None
         self._hass = None
 
-    def register_room_updater(self, parent_updater, hass):
+    def register_room_updater(self, parent_updater: Callable[[], None]) -> None:
+        """Register the parent room updater callback."""
         self._update_parent_room = parent_updater
 
     @property
@@ -824,7 +831,7 @@ class CyncSwitch:
                 rgb_values = (0, 0, 0)  # Default RGB values
 
             # Use combo_control to turn on the light
-            self.combo_control(True, brightness_percent, color_temp, rgb_values, controller, self.mesh_id, seq)
+            self.hub.combo_control(True, brightness_percent, color_temp, rgb_values, controller, self.mesh_id, seq)
 
             # Handle effects, flash, and transition if supported
             if effect:
@@ -871,11 +878,11 @@ class CyncSwitch:
             else:
                 update_received = True
 
-    def command_received(self, seq):
-        """Remove command from hub.pending_commands when a reply is received from Cync server"""
+    def command_received(self, seq: str) -> None:
+        """Remove command from hub.pending_commands when a reply is received from Cync server."""
         self.hub.pending_commands.pop(seq, None)
 
-    def update_switch(self, state, brightness, color_temp=None, rgb=None):
+    def update_switch(self, state: bool, brightness: int, color_temp: Optional[int] = None, rgb: Optional[Dict[str, int]] = None) -> None:
         """Update the state of the switch as updates are received from the Cync server."""
         self.update_received = True
 
@@ -919,8 +926,8 @@ class CyncSwitch:
             self.rgb = rgb_scaled
             self.publish_update()
 
-    def update_controllers(self):
-        """Update the list of responsive, Wi-Fi connected controller devices"""
+    def update_controllers(self) -> None:
+        """Update the list of responsive, Wi-Fi connected controller devices."""
         connected_devices = self.hub.connected_devices[self.home_id]
         controllers = []
         if connected_devices:
@@ -941,7 +948,8 @@ class CyncSwitch:
         else:
             self.controllers = [self.default_controller]
 
-    def publish_update(self):
+    def publish_update(self) -> None:
+        """Publish the update to Home Assistant."""
         if self._update_callback:
             asyncio.run_coroutine_threadsafe(
                 self._update_callback(),
@@ -951,7 +959,7 @@ class CyncSwitch:
 
 class CyncMotionSensor:
 
-    def __init__(self, device_id, device_info, room, hub, hass):
+    def __init__(self, room_id: str, room_info: Dict[str, Any], hub: CyncHub, hass: HomeAssistant) -> None:
 
         self.device_id = device_id
         self.name = device_info['name']
@@ -985,7 +993,7 @@ class CyncMotionSensor:
 
 class CyncAmbientLightSensor:
 
-    def __init__(self, device_id, device_info, room, hub, hass):
+    def __init__(self, device_id: str, device_info: Dict[str, Any], room: Optional[CyncRoom], hub: CyncHub, hass: HomeAssistant) -> None:
 
         self.device_id = device_id
         self.name = device_info['name']
