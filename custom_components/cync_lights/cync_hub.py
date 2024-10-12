@@ -49,7 +49,7 @@ Capabilities = {
 
 class CyncHub:
 
-    def __init__(self, user_data, options):
+    def __init__(self, user_data, options, hass):
 
         self._hass = hass
         self.thread = None
