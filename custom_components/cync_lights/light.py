@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, Tuple, List, Optional
 
 import logging
-import asyncio  # Ensure asyncio is imported
+import asyncio
 
 from homeassistant.components.light import (
     ATTR_BRIGHTNESS,
@@ -14,6 +14,8 @@ from homeassistant.components.light import (
     ATTR_EFFECT,
     ATTR_FLASH,
     ATTR_RGB_COLOR,
+    ATTR_RGBW_COLOR,
+    ATTR_RGBWW_COLOR,
     ATTR_TRANSITION,
     ColorMode,
     LightEntity,
@@ -68,7 +70,11 @@ class CyncSwitchEntity(LightEntity):
 
         # Determine supported color modes based on capabilities
         supported_color_modes = set()
-        if self.cync_switch.support_rgb and self.cync_switch.support_color_temp:
+        if self.cync_switch.support_rgbww:
+            supported_color_modes = {ColorMode.RGBWW}
+        elif self.cync_switch.support_rgbw:
+            supported_color_modes = {ColorMode.RGBW}
+        elif self.cync_switch.support_rgb and self.cync_switch.support_color_temp:
             supported_color_modes = {ColorMode.RGB, ColorMode.COLOR_TEMP}
         elif self.cync_switch.support_rgb:
             supported_color_modes = {ColorMode.RGB}
@@ -159,6 +165,22 @@ class CyncSwitchEntity(LightEntity):
         return None
 
     @property
+    def rgbw_color(self) -> Tuple[int, int, int, int] | None:
+        """Return the RGBW color tuple if supported."""
+        rgbw = self.cync_switch.rgbw
+        if rgbw and rgbw.get('active'):
+            return (rgbw['r'], rgbw['g'], rgbw['b'], rgbw['w'])
+        return None
+
+    @property
+    def rgbww_color(self) -> Tuple[int, int, int, int, int] | None:
+        """Return the RGBWW color tuple if supported."""
+        rgbww = self.cync_switch.rgbww
+        if rgbww and rgbww.get('active'):
+            return (rgbww['r'], rgbww['g'], rgbww['b'], rgbww['w1'], rgbww['w2'])
+        return None
+
+    @property
     def supported_color_modes(self) -> set[ColorMode]:
         """Return set of supported color modes."""
         return self._attr_supported_color_modes
@@ -166,6 +188,10 @@ class CyncSwitchEntity(LightEntity):
     @property
     def color_mode(self) -> ColorMode:
         """Return the active color mode."""
+        if self.cync_switch.support_rgbww and self.cync_switch.rgbww.get('active'):
+            return ColorMode.RGBWW
+        if self.cync_switch.support_rgbw and self.cync_switch.rgbw.get('active'):
+            return ColorMode.RGBW
         if self.cync_switch.support_rgb and self.cync_switch.rgb.get('active'):
             return ColorMode.RGB
         if self.cync_switch.support_color_temp and self.cync_switch.color_temp_kelvin:
@@ -195,6 +221,8 @@ class CyncSwitchEntity(LightEntity):
         brightness = kwargs.get(ATTR_BRIGHTNESS)
         color_temp_kelvin = kwargs.get(ATTR_COLOR_TEMP_KELVIN)
         rgb_color = kwargs.get(ATTR_RGB_COLOR)
+        rgbw_color = kwargs.get(ATTR_RGBW_COLOR)
+        rgbww_color = kwargs.get(ATTR_RGBWW_COLOR)
 
         if not color_temp_kelvin and ATTR_COLOR_TEMP in kwargs:
             # Convert mireds to Kelvin
@@ -217,6 +245,8 @@ class CyncSwitchEntity(LightEntity):
                 brightness=brightness,
                 color_temp_kelvin=color_temp_kelvin,
                 rgb_color=rgb_color,
+                rgbw_color=rgbw_color,
+                rgbww_color=rgbww_color,
                 effect=effect,
                 flash=flash,
                 transition=transition,
