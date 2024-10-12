@@ -454,7 +454,7 @@ class CyncHub:
 
 class CyncRoom:
 
-    def __init__(self, room_id: str, room_info: Dict[str, Any], hub: CyncHub, hass: HomeAssistant) -> None:
+    def __init__(self, room_id: str, room_info: Dict[str, Any], hub, hass) -> None:
         """Initialize the Cync Room."""
         self.hub = hub
         self._hass = hass
@@ -727,7 +727,7 @@ class CyncRoom:
 
 class CyncSwitch:
 
-    def __init__(self, device_id: str, switch_info: Dict[str, Any], room: Optional[CyncRoom], hub: CyncHub, hass: HomeAssistant) -> None:
+    def __init__(self, device_id: str, switch_info: Dict[str, Any], room: Optional[CyncRoom], hub, hass) -> None:
         """Initialize the Cync Switch."""
         self.hub = hub
         self._hass = hass
@@ -758,7 +758,7 @@ class CyncSwitch:
         self._command_timeout = 0.5
         self._command_retry_time = 5
 
-    def register(self, update_callback: Callable[[], None], hass: HomeAssistant) -> None:
+    def register(self, update_callback: Callable[[], None], hass) -> None:
         """Register callback, called when switch changes state."""
         self._update_callback = update_callback
         self._hass = hass
@@ -959,7 +959,7 @@ class CyncSwitch:
 
 class CyncMotionSensor:
 
-    def __init__(self, room_id: str, room_info: Dict[str, Any], hub: CyncHub, hass: HomeAssistant) -> None:
+    def __init__(self, room_id: str, room_info: Dict[str, Any], hub, hass) -> None:
 
         self.device_id = device_id
         self.name = device_info['name']
@@ -993,7 +993,7 @@ class CyncMotionSensor:
 
 class CyncAmbientLightSensor:
 
-    def __init__(self, device_id: str, device_info: Dict[str, Any], room: Optional[CyncRoom], hub: CyncHub, hass: HomeAssistant) -> None:
+    def __init__(self, device_id: str, device_info: Dict[str, Any], room: Optional[CyncRoom], hub, hass) -> None:
 
         self.device_id = device_id
         self.name = device_info['name']
