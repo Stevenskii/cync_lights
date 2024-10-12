@@ -739,37 +739,40 @@ class CyncSwitch:
         flash: Optional[str] = None,
         transition: Optional[float] = None
     ) -> None:
-        """Turn on the light."""
+        """Turn on the light with optional brightness, color, and effects."""
         attempts = 0
         update_received = False
         while not update_received and attempts < int(self._command_retry_time / self._command_timeout):
             seq = str(self.hub.get_seq_num())
             controller = self.controllers[attempts % len(self.controllers)] if self.controllers else self.default_controller
     
-            # Convert Home Assistant brightness (0-255) to Cync's brightness scale (0-100)
-            if brightness is not None:
-                brightness_percent = round(brightness * 100 / 255)
-            else:
-                # Use stored brightness or default to 100%
-                brightness_percent = self.brightness if self.brightness else 100
+        # Convert Home Assistant brightness (0-255) to Cync's brightness scale (0-100)
+        if brightness is not None:
+            brightness_percent = round(brightness * 100 / 255)
+        else:
+            # If brightness isn't passed, use the current brightness value or default to 100
+            brightness_percent = self.brightness if self.brightness else 100
     
-            # Handle color temperature
-            if color_temp_kelvin is not None:
-                # Calculate color_temp as a percentage
-                color_temp = round(
-                    (
-                        (color_temp_kelvin - self.min_color_temp_kelvin) /
-                        (self.max_color_temp_kelvin - self.min_color_temp_kelvin)
-                    ) * 100
-                )
-            else:
-                color_temp = 254  # Default value indicating no color temperature adjustment
+        # Handle color temperature adjustment
+        if color_temp_kelvin is not None:
+            color_temp = round(
+                (
+                    (color_temp_kelvin - self.min_color_temp_kelvin) /
+                    (self.max_color_temp_kelvin - self.min_color_temp_kelvin)
+                ) * 100
+            )
+        else:
+            color_temp = 254  # Default value if color temperature is not provided
     
-            # Handle RGB
-            if rgb_color is not None:
-                rgb_values = tuple(int(x) for x in rgb_color)
-            else:
-                rgb_values = (0, 0, 0)  # Default RGB values
+        # Retain current RGB values if no new color is passed, to avoid resetting it
+        if rgb_color is None:
+            rgb_values = (self.rgb['r'], self.rgb['g'], self.rgb['b']) if self.rgb['active'] else (0, 0, 0)
+        else:
+            rgb_values = tuple(int(x) for x in rgb_color)
+    
+        while not update_received and attempts < int(self._command_retry_time / self._command_timeout):
+            seq = str(self.hub.get_seq_num())
+            controller = self.controllers[attempts % len(self.controllers)] if self.controllers else self.default_controller
     
             # Use combo_control to turn on the light with the converted brightness
             self.hub.combo_control(True, brightness_percent, color_temp, rgb_values, controller, self.mesh_id, seq)
