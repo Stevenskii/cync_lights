@@ -135,10 +135,8 @@ class CyncSwitchEntity(LightEntity):
 
     @property
     def brightness(self) -> int | None:
-        """Return the brightness of this switch between 0..255."""
-        if self.cync_switch.brightness is not None:
-            return round(self.cync_switch.brightness * 255 / 100)
-        return None
+        """Return the brightness of this switch."""
+        return self.cync_switch.brightness  # No scaling here
 
     @property
     def color_temp(self) -> int | None:
@@ -240,10 +238,10 @@ class CyncSwitchEntity(LightEntity):
         if effect == "None":
             effect = None
 
-        # Handle the conversion of brightness properly
+        # Handle brightness conversion here
         brightness_percent = None
         if brightness is not None:
-            brightness_percent = round(brightness * 100 / 255)
+            brightness_percent = round(brightness * 100 / 255)  # Scale 0-255 to 0-100
 
         try:
             await self.cync_switch.turn_on(
@@ -267,4 +265,3 @@ class CyncSwitchEntity(LightEntity):
             await self.cync_switch.turn_off(flash=flash, transition=transition)
         except Exception as e:
             _LOGGER.error("Error turning off light %s: %s", self.name, e)
-
