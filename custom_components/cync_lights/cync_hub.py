@@ -51,6 +51,7 @@ class CyncHub:
 
     def __init__(self, user_data, options):
 
+        self._hass = hass
         self.thread = None
         self.loop = None
         self.reader = None
@@ -453,9 +454,10 @@ class CyncHub:
 
 class CyncRoom:
 
-    def __init__(self, room_id, room_info, hub) -> None:
+    def __init__(self, room_id, room_info, hub, hass) -> None:
         """Initialize the Cync Room."""
         self.hub = hub
+        self._hass = hass
         self.room_id = room_id
         self.home_id = room_id.split('-')[0]
         self.name = room_info.get('name', 'unknown')
@@ -725,6 +727,7 @@ class CyncSwitch:
 
     def __init__(self, device_id, switch_info, room, hub):
         self.hub = hub
+        self._hass = hass
         self.device_id = device_id
         self.switch_id = switch_info.get('switch_id', '0')
         self.home_id = [home_id for home_id, home_devices in self.hub.home_devices.items() if self.device_id in home_devices][0]
@@ -948,7 +951,7 @@ class CyncSwitch:
 
 class CyncMotionSensor:
 
-    def __init__(self, device_id, device_info, room):
+    def __init__(self, device_id, device_info, room, hub, hass):
 
         self.device_id = device_id
         self.name = device_info['name']
@@ -957,6 +960,7 @@ class CyncMotionSensor:
         self.motion = False
         self._update_callback = None
         self._hass = None
+        self.hub = hub
 
     def register(self, update_callback, hass) -> None:
         """Register callback, called when sensor changes state."""
@@ -981,7 +985,7 @@ class CyncMotionSensor:
 
 class CyncAmbientLightSensor:
 
-    def __init__(self, device_id, device_info, room):
+    def __init__(self, device_id, device_info, room, hub, hass):
 
         self.device_id = device_id
         self.name = device_info['name']
@@ -990,6 +994,7 @@ class CyncAmbientLightSensor:
         self.ambient_light = False
         self._update_callback = None
         self._hass = None
+        self.hub = hub
 
     def register(self, update_callback, hass) -> None:
         """Register callback, called when sensor changes state."""
