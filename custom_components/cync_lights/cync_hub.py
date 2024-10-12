@@ -348,7 +348,7 @@ class CyncHub:
         self.loop.create_task(send())
 
     def combo_control(self, state, brightness, color_tone, rgb, switch_id, mesh_id, seq, is_rgbww=False):
-    """Send combo control command to adjust state, brightness, color temperature, and RGB/RGBWW."""
+        """Send combo control command to adjust state, brightness, color temperature, and RGB/RGBWW."""
         rgb_values = rgb
         checksum = (496 + int(mesh_id[0]) + int(mesh_id[1]) + (1 if state else 0) + brightness + color_tone + sum(rgb_values)) % 256
     
