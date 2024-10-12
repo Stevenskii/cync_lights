@@ -742,9 +742,6 @@ class CyncSwitch:
         """Turn on the light with optional brightness, color, and effects."""
         attempts = 0
         update_received = False
-        while not update_received and attempts < int(self._command_retry_time / self._command_timeout):
-            seq = str(self.hub.get_seq_num())
-            controller = self.controllers[attempts % len(self.controllers)] if self.controllers else self.default_controller
     
         # Convert Home Assistant brightness (0-255) to Cync's brightness scale (0-100)
         if brightness is not None:
@@ -774,7 +771,7 @@ class CyncSwitch:
             seq = str(self.hub.get_seq_num())
             controller = self.controllers[attempts % len(self.controllers)] if self.controllers else self.default_controller
     
-            # Use combo_control to turn on the light with the converted brightness
+            # Send command to adjust brightness, color temp, and RGB while turning on the light
             self.hub.combo_control(True, brightness_percent, color_temp, rgb_values, controller, self.mesh_id, seq)
     
             # Handle effects, flash, and transition if supported
@@ -787,6 +784,7 @@ class CyncSwitch:
     
             self.hub.pending_commands[seq] = self.command_received
             await asyncio.sleep(self._command_timeout)
+    
             if self.hub.pending_commands.get(seq) is not None:
                 self.hub.pending_commands.pop(seq)
                 attempts += 1
