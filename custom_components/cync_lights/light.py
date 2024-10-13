@@ -62,13 +62,7 @@ class CyncSwitchEntity(LightEntity):
         self._attr_name = self.cync_switch.name
         self._attr_unique_id = f'cync_switch_{self.cync_switch.device_id}'
         self._attr_should_poll = False
-        self._attr_supported_features = (
-            LightEntityFeature.ON_OFF
-            | LightEntityFeature.BRIGHTNESS
-            | LightEntityFeature.COLOR_TEMP
-            | LightEntityFeature.FLASH
-            | LightEntityFeature.EFFECT
-        )
+        self._attr_supported_features = LightEntityFeature(0)
 
         # Determine supported color modes based on capabilities
         supported_color_modes = set()
