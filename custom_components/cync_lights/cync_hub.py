@@ -269,10 +269,22 @@ class CyncHub:
             room.publish_update()
 
     def send_request(self, request):
-        async def send():
-            self.writer.write(request)
-            await self.writer.drain()
-        self.loop.create_task(send())
+        async def send(self, request):
+            """Send a request to the Cync server."""
+            try:
+                self.writer.write(request)
+                await self.writer.drain()
+            except ConnectionResetError as e:
+                _LOGGER.error("Connection reset, retrying: %s", e)
+                await self._reconnect()  # Call reconnect logic
+            except Exception as e:
+                _LOGGER.error("Unexpected error during send: %s", e)
+                raise
+    async def _reconnect(self):
+        """Reconnect to the Cync server if the connection is lost."""
+        _LOGGER.debug("Attempting to reconnect...")
+        await self._connect()
+
 
     def _create_set_status_packet(self, switch_id, seq, device_index, state):
         """Create a Set Device Status packet."""
