@@ -68,11 +68,13 @@ class CyncSwitchEntity(LightEntity):
         # Determine supported color modes based on capabilities
         supported_color_modes = set()
         if self.cync_switch.support_rgb:
-            supported_color_modes.add(ColorMode.RGB)
+                supported_color_modes.add(ColorMode.RGB)
         if self.cync_switch.support_color_temp:
-            supported_color_modes.add(ColorMode.COLOR_TEMP)
-        if self.cync_switch.support_brightness:
-            supported_color_modes.add(ColorMode.BRIGHTNESS)
+                supported_color_modes.add(ColorMode.COLOR_TEMP)
+        # Only add BRIGHTNESS if neither RGB nor COLOR_TEMP is supported
+        if not (self.cync_switch.support_rgb or self.cync_switch.support_color_temp):
+            if self.cync_switch.support_brightness:
+                    supported_color_modes.add(ColorMode.BRIGHTNESS)
         if not supported_color_modes:
             supported_color_modes.add(ColorMode.ONOFF)
 
