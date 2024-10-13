@@ -276,26 +276,41 @@ class CyncHub:
 
     def _create_set_status_packet(self, switch_id, seq, device_index, state):
         """Create a Set Device Status packet."""
-        data_payload = struct.pack(">IHB", device_index, 0, state)
+        data_payload = struct.pack(">IHBBBB", device_index, 0, 0xd0, 0, 0, state)
         packet = self._build_pipe_packet(int(switch_id), seq, 0xd0, data_payload)
         return packet
-
+    
+    
     def _create_set_brightness_packet(self, switch_id, seq, device_index, brightness):
         """Create a Set Brightness packet."""
-        data_payload = struct.pack(">IHB", device_index, 0, brightness)
+        data_payload = struct.pack(">IHBBBB", device_index, 0, 0xd2, 0, 0, brightness)
         packet = self._build_pipe_packet(int(switch_id), seq, 0xd2, data_payload)
         return packet
-
+    
+    
     def _create_set_color_tone_packet(self, switch_id, seq, device_index, color_tone):
         """Create a Set Color Tone packet."""
-        data_payload = struct.pack(">IHB", device_index, 0, color_tone)
+        data_payload = struct.pack(">IHBBBB", device_index, 0, 0xe2, 0, 0x05, color_tone)
         packet = self._build_pipe_packet(int(switch_id), seq, 0xe2, data_payload)
         return packet
-
+    
+    
     def _create_set_rgb_packet(self, switch_id, seq, device_index, r, g, b):
         """Create a Set RGB packet."""
-        data_payload = struct.pack(">IHBBBB", device_index, 0, 0xe2, r, g, b)
+        data_payload = struct.pack(">IHBBB", device_index, 0, 0xe2, r, g, b)
         packet = self._build_pipe_packet(int(switch_id), seq, 0xe2, data_payload)
+        return packet
+    
+    def _create_response_packet(self, switch_id, response_id):
+        """Create a response packet to acknowledge receipt."""
+        data_payload = struct.pack(">H", response_id)
+        packet = self._build_pipe_packet(int(switch_id), response_id, 0xA0, data_payload)
+        return packet
+        
+    def _create_ping_packet(self, switch_id, seq):
+        """Create a Ping packet to maintain connection."""
+        data_payload = struct.pack(">IH", seq, 0)
+        packet = self._build_pipe_packet(int(switch_id), seq, 0xFF, data_payload)
         return packet
 
     def _build_pipe_packet(self, device_id, seq, subtype, data):
