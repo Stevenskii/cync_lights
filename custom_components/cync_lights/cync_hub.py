@@ -298,12 +298,6 @@ class CyncHub:
         packet = self._build_pipe_packet(int(switch_id), seq, 0xe2, data_payload)
         return packet
 
-    def _create_get_status_paginated_packet(self, switch_id, seq):
-        """Create a Get Status Paginated packet."""
-        data_payload = bytes([0x00, 0x00, 0x00, 0xff, 0xff, 0x00])
-        packet = self._build_pipe_packet(int(switch_id), seq, 0x52, data_payload)
-        return packet
-
     def _build_pipe_packet(self, device_id, seq, subtype, data):
         """Build a generic pipe packet."""
         packet = bytearray()

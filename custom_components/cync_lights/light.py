@@ -159,11 +159,6 @@ class CyncSwitchEntity(LightEntity):
         """Return the current effect."""
         return getattr(self.cync_switch, 'current_effect', None)
 
-    @property
-    def extra_state_attributes(self) -> dict[str, Any] | None:
-        """Return the optional state attributes."""
-        return {"color_temp_kelvin": self.color_temp_kelvin}
-
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn on the light."""
         _LOGGER.debug("Turning on light: %s with kwargs: %s", self.name, kwargs)
