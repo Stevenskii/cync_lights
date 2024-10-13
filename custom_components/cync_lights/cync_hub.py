@@ -77,7 +77,7 @@ class CyncHub:
             for device_id, device_info in user_data['cync_config']['devices'].items() if device_info.get("AMBIENT_LIGHT", False)
         }
         self.switchID_to_deviceIDs = {
-            device_info['switch_id']: [dev_id for dev_id, dev_info in self.cync_switches.items() if dev_info.switch_id == device_info['switch_id']]
+            device_info.switch_id: [dev_id for dev_id, dev_info in self.cync_switches.items() if dev_info.switch_id == device_info.switch_id]
             for device_id, device_info in self.cync_switches.items() if int(device_info.switch_id) > 0
         }
         self.connected_devices_updated = False
