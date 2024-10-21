@@ -205,7 +205,13 @@ class CyncHub:
         [room.initialize() for room in self.cync_rooms.values() if not room.is_subgroup]
     
         self.loop = asyncio.get_event_loop()
-        # Parse lightShows data and create effect mapping
+    def get_seq_num(self):
+        """Thread-safe method to get the next sequence number."""
+        with self.seq_lock:
+            self.seq_num += 1
+            if self.seq_num > 65535:
+                self.seq_num = 1  # Reset if exceeds max value
+            return self.seq_num
         
 
     def _parse_light_shows(self, cync_config):
