@@ -1,61 +1,64 @@
-"""The Cync Room Lights integration."""
-from __future__ import annotations
-
+import asyncio
 import logging
-from typing import Any
-
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.const import CONF_HOST, CONF_PORT
+from homeassistant.helpers import entity_platform
 
-from .const import DOMAIN
 from .cync_hub import CyncHub
-
-# Import platforms at module level to avoid blocking calls during event loop
-from . import light, binary_sensor, switch, fan
-
-PLATFORMS: list[str] = ["light", "binary_sensor", "switch", "fan"]
+from .const import DOMAIN, CONF_USERNAME, CONF_PASSWORD
 
 _LOGGER = logging.getLogger(__name__)
 
-async def async_setup_entry(
-    hass: HomeAssistant,
-    entry: ConfigEntry,
-) -> bool:
-    """Set up Cync Room Lights from a config entry."""
-    hass.data.setdefault(DOMAIN, {})
+PLATFORMS = ["light", "binary_sensor", "switch", "fan"]
 
-    # Retrieve configuration data
-    data = entry.data
-    options = entry.options
 
-    # Initialize CyncHub with SSL option
-    hub = CyncHub(
-        hass=hass,
-        data=data,
-        options=options
-    )
-    hass.data[DOMAIN][entry.entry_id] = hub
+async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Set up Cync Lights from a config entry."""
+    username = entry.data[CONF_USERNAME]
+    password = entry.data[CONF_PASSWORD]
+    host = entry.data.get(CONF_HOST)
+    port = entry.data.get(CONF_PORT)
 
-    # Forward the entry setups to the platforms
-    for platform in PLATFORMS:
-        hass.async_create_task(
-            hass.config_entries.async_forward_entry_setup(entry, platform)
-        )
+    # Create CyncHub instance
+    hub = CyncHub(hass, entry.data, entry.options)
 
-    return True
+    try:
+        # Authenticate with the Cync API
+        auth_result = await hub.authenticate(username, password)
+        if not auth_result.get('authorized', False):
+            _LOGGER.error("Failed to authenticate with Cync API")
+            return False
 
-async def async_unload_entry(
-    hass: HomeAssistant,
-    entry: ConfigEntry,
-) -> bool:
-    """Unload a config entry."""
-    hub: CyncHub = hass.data[DOMAIN].pop(entry.entry_id)
-    hub.shutdown()
+        # Get configuration data from Cync API
+        cync_config = await hub.get_cync_config()
+        if not cync_config:
+            _LOGGER.error("Failed to get Cync configuration")
+            return False
+
+        # Store hub object in Home Assistant's data store
+        hass.data.setdefault(DOMAIN, {})
+        hass.data[DOMAIN][entry.entry_id] = hub
+
+        # Set up platforms (light, binary_sensor, switch, fan)
+        await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+        _LOGGER.info("Successfully set up Cync Lights integration")
+        return True
+
+    except Exception as e:
+        _LOGGER.error(f"Error setting up Cync Lights integration: {e}")
+        return False
+
+
+async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Unload a Cync Lights config entry."""
+    hub = hass.data[DOMAIN].pop(entry.entry_id, None)
+
+    if hub:
+        await hub.shutdown()
 
     # Unload platforms
-    unload_ok = True
-    for platform in PLATFORMS:
-        platform_unload = await hass.config_entries.async_forward_entry_unload(entry, platform)
-        unload_ok = unload_ok and platform_unload
+    unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 
     return unload_ok

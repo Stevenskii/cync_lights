@@ -144,36 +144,24 @@ class StatusPaginatedResponse:
                 f"ct={self.ct}, is_on={self.is_on}, use_rgb={self.use_rgb}, rgb={self.rgb})")
 
 class CyncHub:
-    def __init__(
-        self,
-        hass: Any,  # Replace 'Any' with the appropriate type if available
-        data: Dict[str, Any],
-        options: Dict[str, Any],
-    ) -> None:
-        """
-        Initialize the CyncHub.
-
-        :param hass: Home Assistant instance
-        :param data: Configuration data from config entry
-        :param options: Additional options from config entry
-        """
+    def __init__(self, hass: Any, data: Dict[str, Any], options: Dict[str, Any]) -> None:
+        """Initialize the CyncHub."""
         self.hass = hass
         self.host = data.get("host", DEFAULT_HOST)
         self.port = data.get("port", DEFAULT_PORT)
         self.login_code = data.get("login_code", b'')
         self.use_ssl = options.get("use_ssl", True)  # Default to True
 
-        if self.use_ssl:
-            self.ssl_context = ssl.create_default_context()
-            _LOGGER.debug("SSL is enabled for CyncHub.")
-        else:
-            self.ssl_context = None
-            _LOGGER.debug("SSL is disabled for CyncHub.")
-
         self.reader: Optional[asyncio.StreamReader] = None
         self.writer: Optional[asyncio.StreamWriter] = None
         self.logged_in = False
         self.shutting_down = False
+
+        # Device attributes
+        self.cync_switches = {}
+        self.cync_motion_sensors = {}
+        self.cync_rooms = {}
+        self.cync_fans = {}
 
         self.buffer = b''
         self.packet_handlers: Dict[int, Callable[[bool, bytes], asyncio.Future]] = {}
@@ -195,14 +183,10 @@ class CyncHub:
         self.client_thread.start()
 
     def start_client(self):
-        """
-        Start the asyncio event loop for the TCP client.
-        """
+        """Start the asyncio event loop for the TCP client."""
         try:
             self.loop.run_until_complete(self.connect())
             self.loop.run_until_complete(self.read_tcp_messages())
-        except ShuttingDown:
-            _LOGGER.info("CyncHub is shutting down.")
         except Exception as e:
             _LOGGER.error(f"CyncHub encountered an exception: {e}")
             _LOGGER.debug("Traceback:", exc_info=True)
@@ -213,10 +197,11 @@ class CyncHub:
             self.loop.stop()
 
     async def connect(self):
-        """
-        Establish TCP connection and authenticate.
-        """
+        """Establish TCP connection and authenticate."""
         try:
+            # Move SSL context creation out of the event loop
+            await self.hass.async_add_executor_job(self._create_ssl_context)
+
             self.reader, self.writer = await asyncio.open_connection(
                 self.host,
                 self.port,
@@ -237,7 +222,6 @@ class CyncHub:
                 raise Exception("Authentication failed: no response from server")
 
             # Process login response
-            # Adjust the condition based on actual protocol specifications
             if login_response.startswith(b'\x18\x00\x00\x00\x02\x00\x00'):
                 self.logged_in = True
                 _LOGGER.info("Successfully authenticated with the server.")
@@ -247,6 +231,15 @@ class CyncHub:
         except Exception as e:
             _LOGGER.error(f"Failed to connect or authenticate: {e}")
             raise
+
+    def _create_ssl_context(self):
+        """Create SSL context outside of the event loop."""
+        if self.use_ssl:
+            self.ssl_context = ssl.create_default_context()
+            _LOGGER.debug("SSL is enabled for CyncHub.")
+        else:
+            self.ssl_context = None
+            _LOGGER.debug("SSL is disabled for CyncHub.")
 
     async def read_tcp_messages(self):
         """
