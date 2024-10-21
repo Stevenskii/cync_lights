@@ -738,9 +738,9 @@ class CyncRoom:
             self.color_temp_kelvin = _color_temp
             self.rgb = _rgb
             self.publish_update()
-            if self._update_callback:
+            if self._update_callback and self._hass:
                 self._hass.add_job(self._update_callback)
-            if self._update_parent_room:
+            if self._update_parent_room and self._hass:
                 self._hass.add_job(self._update_parent_room)
 
     def update_controllers(self):
@@ -798,9 +798,10 @@ class CyncSwitch:
         self._update_callback = None
         self._hass = None
 
-    def register_room_updater(self, parent_updater):
+    def register_room_updater(self, parent_updater, hass):
         """Register callback for room updates."""
         self._update_parent_room = parent_updater
+        self._hass = hass
 
     @property
     def max_color_temp_kelvin(self) -> int:
@@ -916,8 +917,8 @@ class CyncSwitch:
             self.color_temp_kelvin = color_temp if color_temp is not None else self.color_temp_kelvin
             self.rgb = rgb if rgb is not None else self.rgb
             self.publish_update()
-            if self._update_parent_room:
-                self._update_parent_room()
+            if self._update_parent_room and self._hass:
+                self._hass.add_job(self._update_parent_room)
 
     def update_controllers(self):
         """Update the list of responsive, Wi-Fi connected controller devices"""
@@ -948,8 +949,9 @@ class CyncSwitch:
             self.controllers = [self.default_controller]
 
     def publish_update(self):
-        if self._update_callback:
-            self._update_callback()
+        if self._update_callback and self._hass:
+            self._hass.add_job(self._update_callback)
+
 
 
 class CyncMotionSensor:
@@ -978,8 +980,9 @@ class CyncMotionSensor:
         self.publish_update()
 
     def publish_update(self):
-        if self._update_callback:
+        if self._update_callback and self._hass:
             self._hass.add_job(self._update_callback)
+
 
 
 class CyncAmbientLightSensor:
