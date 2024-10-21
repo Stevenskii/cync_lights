@@ -5,6 +5,7 @@ import struct
 import aiohttp
 import math
 import ssl
+import traceback
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 _LOGGER = logging.getLogger(__name__)
@@ -187,222 +188,355 @@ class CyncHub:
             raise Exception("Authentication failed: no response from server")
 
     async def _read_tcp_messages(self):
-        self.writer.write(self.login_code)
+        """
+        Continuously read and process TCP messages from the server.
+        Implements proper buffer management to handle fragmented packets.
+        """
+        # Send the login code once during authentication
+        self.writer.write(bytes(self.login_code))
         await self.writer.drain()
-        await self.reader.read(1000)
+        login_response = await self.reader.read(1000)
+        _LOGGER.debug(f"Login response: {login_response.hex()}")
+
+        if not login_response:
+            _LOGGER.error("Authentication failed: no response from server")
+            raise Exception("Authentication failed: no response from server")
+
         self.logged_in = True
+
+        buffer = b''  # Initialize an empty buffer
+
         while not self.shutting_down:
-            data = await self.reader.read(1000)
-            if len(data) == 0:
-                self.logged_in = False
-                raise LostConnection
-            while len(data) >= 12:
-                if len(data) < 5:
-                    _LOGGER.error("Data too short to extract packet header")
-                    break
-                packet_type = int(data[0])
-                packet_length = struct.unpack(">I", data[1:5])[0]
-                if len(data) < packet_length + 5:
-                    # Wait for more data
-                    break
-                packet = data[5:packet_length + 5]
-                try:
-                    if packet_length == len(packet):
+            try:
+                data = await self.reader.read(1024)
+                if len(data) == 0:
+                    self.logged_in = False
+                    raise LostConnection
+                buffer += data
+                _LOGGER.debug(f"Received raw data: {data.hex()}")
+
+                while True:
+                    # Check if buffer has enough data for the header (5 bytes)
+                    if len(buffer) < 5:
+                        break  # Wait for more data
+
+                    # Extract packet_type and packet_length
+                    packet_type = buffer[0]
+                    packet_length = struct.unpack(">I", buffer[1:5])[0]
+                    _LOGGER.debug(f"Packet Type: {packet_type}, Packet Length: {packet_length}")
+
+                    # Validate packet_length
+                    if packet_length == 0:
+                        _LOGGER.warning(f"Received packet with length 0. Skipping byte 0x{buffer[0]:02X}")
+                        buffer = buffer[1:]  # Remove the problematic byte and continue
+                        continue
+
+                    # Check if the entire packet is available
+                    if len(buffer) < 5 + packet_length:
+                        break  # Wait for more data
+
+                    # Extract the full packet
+                    packet = buffer[5:5 + packet_length]
+                    _LOGGER.debug(f"Packet Content: {packet.hex()}")
+
+                    # Process the packet based on its type
+                    try:
                         if packet_type == 115:
-                            if len(packet) < 6:
-                                _LOGGER.error("Packet too short to process packet type 115")
-                                break
-                            switch_id = str(struct.unpack(">I", packet[0:4])[0])
-                            home_id = self.switchID_to_homeID.get(switch_id)
-                            if home_id is None:
-                                _LOGGER.error(f"switch_id {switch_id} not found in switchID_to_homeID")
-                                break
-    
-                            # Send response packet
-                            response_id = struct.unpack(">H", packet[4:6])[0]
-                            response_packet = (
-                                bytes.fromhex('7300000007') +
-                                int(switch_id).to_bytes(4, 'big') +
-                                response_id.to_bytes(2, 'big') +
-                                bytes.fromhex('00')
-                            )
-                            self.loop.call_soon_threadsafe(self.send_request, response_packet)
-    
-                            if packet_length >= 33 and len(packet) >= 33 and packet[13] == 219:
-                                # Parse state and brightness change packet
-                                device_index = packet[21]
-                                if device_index >= len(self.home_devices[home_id]):
-                                    _LOGGER.error(f"Device index {device_index} out of range for home_devices[{home_id}]")
-                                    break
-                                deviceID = self.home_devices[home_id][device_index]
-                                state = packet[27] > 0
-                                brightness = packet[28] if state else 0
-                                color_temp = packet[29]
-                                rgb = {
-                                    'r': packet[30],
-                                    'g': packet[31],
-                                    'b': packet[32],
-                                    'active': packet[29] == 254
-                                }
-                                if deviceID in self.cync_switches:
-                                    self.cync_switches[deviceID].update_switch(state, brightness, color_temp, rgb)
-                            elif packet_length >= 25 and len(packet) >= 25 and packet[13] == 84:
-                                # Parse motion and ambient light sensor packet
-                                device_index = packet[16]
-                                if device_index >= len(self.home_devices[home_id]):
-                                    _LOGGER.error(f"Device index {device_index} out of range for home_devices[{home_id}]")
-                                    break
-                                deviceID = self.home_devices[home_id][device_index]
-                                motion = packet[22] > 0
-                                ambient_light = packet[24] > 0
-                                if deviceID in self.cync_motion_sensors:
-                                    self.cync_motion_sensors[deviceID].update_motion_sensor(motion)
-                                if deviceID in self.cync_ambient_light_sensors:
-                                    self.cync_ambient_light_sensors[deviceID].update_ambient_light_sensor(ambient_light)
-                            elif packet_length > 51 and len(packet) > 51 and packet[13] == 82:
-                                # Parse initial state packet
-                                switch_id = str(struct.unpack(">I", packet[0:4])[0])
-                                home_id = self.switchID_to_homeID.get(switch_id)
-                                if home_id is None:
-                                    _LOGGER.error(f"switch_id {switch_id} not found in switchID_to_homeID")
-                                    break
-                                self._add_connected_devices(switch_id, home_id)
-                                payload = packet[22:]
-                                while len(payload) > 24:
-                                    device_index = payload[0]
-                                    if device_index >= len(self.home_devices[home_id]):
-                                        _LOGGER.error(f"Device index {device_index} out of range for home_devices[{home_id}]")
-                                        break
-                                    deviceID = self.home_devices[home_id][device_index]
-                                    if deviceID in self.cync_switches:
-                                        if self.cync_switches[deviceID].elements > 1:
-                                            for i in range(self.cync_switches[deviceID].elements):
-                                                idx = (i + 1) * 256 + device_index
-                                                if idx >= len(self.home_devices[home_id]):
-                                                    _LOGGER.error(f"Device index {idx} out of range for home_devices[{home_id}]")
-                                                    continue
-                                                device_id = self.home_devices[home_id][idx]
-                                                state = ((payload[12] >> i) & payload[8]) > 0
-                                                brightness = 100 if state else 0
-                                                self.cync_switches[device_id].update_switch(state, brightness)
-                                        else:
-                                            state = payload[8] > 0
-                                            brightness = payload[12] if state else 0
-                                            color_temp = payload[16]
-                                            rgb = {
-                                                'r': payload[20],
-                                                'g': payload[21],
-                                                'b': payload[22],
-                                                'active': payload[16] == 254
-                                            }
-                                            self.cync_switches[deviceID].update_switch(state, brightness, color_temp, rgb)
-                                    payload = payload[24:]
+                            await self._handle_packet_type_115(packet)
                         elif packet_type == 131:
-                            if len(packet) < 4:
-                                _LOGGER.error("Packet too short to process packet type 131")
-                                break
-                            switch_id = str(struct.unpack(">I", packet[0:4])[0])
-                            home_id = self.switchID_to_homeID.get(switch_id)
-                            if home_id is None:
-                                _LOGGER.error(f"switch_id {switch_id} not found in switchID_to_homeID")
-                                break
-                            if packet_length >= 33 and len(packet) >= 33 and packet[13] == 219:
-                                # Parse state and brightness change packet
-                                device_index = packet[21]
-                                if device_index >= len(self.home_devices[home_id]):
-                                    _LOGGER.error(f"Device index {device_index} out of range for home_devices[{home_id}]")
-                                    break
-                                deviceID = self.home_devices[home_id][device_index]
-                                state = packet[27] > 0
-                                brightness = packet[28] if state else 0
-                                color_temp = packet[29]
-                                rgb = {
-                                    'r': packet[30],
-                                    'g': packet[31],
-                                    'b': packet[32],
-                                    'active': packet[29] == 254
-                                }
-                                if deviceID in self.cync_switches:
-                                    self.cync_switches[deviceID].update_switch(state, brightness, color_temp, rgb)
-                            elif packet_length >= 25 and len(packet) >= 25 and packet[13] == 84:
-                                # Parse motion and ambient light sensor packet
-                                device_index = packet[16]
-                                if device_index >= len(self.home_devices[home_id]):
-                                    _LOGGER.error(f"Device index {device_index} out of range for home_devices[{home_id}]")
-                                    break
-                                deviceID = self.home_devices[home_id][device_index]
-                                motion = packet[22] > 0
-                                ambient_light = packet[24] > 0
-                                if deviceID in self.cync_motion_sensors:
-                                    self.cync_motion_sensors[deviceID].update_motion_sensor(motion)
-                                if deviceID in self.cync_ambient_light_sensors:
-                                    self.cync_ambient_light_sensors[deviceID].update_ambient_light_sensor(ambient_light)
-                        elif packet_type == 67 and packet_length >= 26 and len(packet) >= 7 and packet[4] == 1 and packet[5] == 1 and packet[6] == 6:
-                            # Parse state packet
-                            switch_id = str(struct.unpack(">I", packet[0:4])[0])
-                            home_id = self.switchID_to_homeID.get(switch_id)
-                            if home_id is None:
-                                _LOGGER.error(f"switch_id {switch_id} not found in switchID_to_homeID")
-                                break
-                            payload = packet[7:]
-                            while len(payload) >= 19:
-                                device_index = payload[3]
-                                if device_index >= len(self.home_devices[home_id]):
-                                    _LOGGER.error(f"Device index {device_index} out of range for home_devices[{home_id}]")
-                                    break
-                                deviceID = self.home_devices[home_id][device_index]
-                                if deviceID in self.cync_switches:
-                                    if self.cync_switches[deviceID].elements > 1:
-                                        for i in range(self.cync_switches[deviceID].elements):
-                                            idx = (i + 1) * 256 + device_index
-                                            if idx >= len(self.home_devices[home_id]):
-                                                _LOGGER.error(f"Device index {idx} out of range for home_devices[{home_id}]")
-                                                continue
-                                            device_id = self.home_devices[home_id][idx]
-                                            state = ((payload[5] >> i) & payload[4]) > 0
-                                            brightness = 100 if state else 0
-                                            self.cync_switches[device_id].update_switch(state, brightness)
-                                    else:
-                                        state = payload[4] > 0
-                                        brightness = payload[5] if state else 0
-                                        color_temp = payload[6]
-                                        rgb = {
-                                            'r': payload[7],
-                                            'g': payload[8],
-                                            'b': payload[9],
-                                            'active': payload[6] == 254
-                                        }
-                                        self.cync_switches[deviceID].update_switch(state, brightness, color_temp, rgb)
-                                payload = payload[19:]
+                            await self._handle_packet_type_131(packet)
+                        elif packet_type == 67:
+                            await self._handle_packet_type_67(packet)
                         elif packet_type == 171:
-                            if len(packet) < 4:
-                                _LOGGER.error("Packet too short to process packet type 171")
-                                break
-                            switch_id = str(struct.unpack(">I", packet[0:4])[0])
-                            home_id = self.switchID_to_homeID.get(switch_id)
-                            if home_id is None:
-                                _LOGGER.error(f"switch_id {switch_id} not found in switchID_to_homeID")
-                                break
-                            self._add_connected_devices(switch_id, home_id)
+                            await self._handle_packet_type_171(packet)
                         elif packet_type == 123:
-                            if len(packet) < 6:
-                                _LOGGER.error("Packet too short to process packet type 123")
-                                break
-                            seq = str(struct.unpack(">H", packet[4:6])[0])
-                            command_received = self.pending_commands.get(seq)
-                            if command_received is not None:
-                                command_received(seq)
+                            await self._handle_packet_type_123(packet)
+                        elif packet_type == 168:
+                            await self._handle_packet_type_168(packet)
+                        elif packet_type == 0:
+                            await self._handle_packet_type_0(packet)
                         else:
-                            _LOGGER.warning(f"Unhandled packet type: {packet_type}, packet length: {len(packet)}, content: {packet.hex()}")
-                    else:
-                        _LOGGER.error("Packet length mismatch.")
-                except Exception as e:
-                    _LOGGER.error(f"Exception occurred while parsing packet: {e}")
-                    _LOGGER.debug(f"Packet data: {packet.hex()}")
-                    _LOGGER.debug(f"Traceback: {traceback.format_exc()}")
-                data = data[packet_length + 5:]
+                            await self._handle_unhandled_packet(packet_type, packet_length, packet)
+                    except Exception as e:
+                        _LOGGER.error(f"Exception occurred while parsing packet: {e}")
+                        _LOGGER.debug(f"Packet data: {packet.hex()}")
+                        _LOGGER.debug(f"Traceback: {traceback.format_exc()}")
+
+                    # Remove the processed packet from the buffer
+                    buffer = buffer[5 + packet_length:]
+
+            except LostConnection:
+                _LOGGER.error("Lost connection to Cync server.")
+                break
+            except Exception as e:
+                _LOGGER.error(f"Exception in _read_tcp_messages: {e}")
+                _LOGGER.debug(f"Traceback: {traceback.format_exc()}")
+                await asyncio.sleep(5)  # Wait before attempting to read again
+
         raise ShuttingDown
 
+    async def _handle_packet_type_115(self, packet: bytes):
+        """
+        Handle packets with packet_type 115.
+        """
+        _LOGGER.debug("Handling packet type 115")
+        if len(packet) < 6:
+            _LOGGER.error("Packet type 115 too short to process")
+            return
+
+        switch_id = str(struct.unpack(">I", packet[0:4])[0])
+        home_id = self.switchID_to_homeID.get(switch_id)
+
+        if home_id is None:
+            _LOGGER.error(f"switch_id {switch_id} not found in switchID_to_homeID")
+            return
+
+        # Send response packet
+        response_id = struct.unpack(">H", packet[4:6])[0]
+        response_packet = (
+            bytes.fromhex('7300000007') +
+            int(switch_id).to_bytes(4, 'big') +
+            response_id.to_bytes(2, 'big') +
+            bytes.fromhex('00')
+        )
+        self.loop.call_soon_threadsafe(self.send_request, response_packet)
+        _LOGGER.debug(f"Sent response packet: {response_packet.hex()}")
+
+        # Further processing based on packet content
+        if len(packet) >= 33 and packet[13] == 219:
+            # Parse state and brightness change packet
+            device_index = int(packet[21])
+            if device_index >= len(self.home_devices[home_id]):
+                _LOGGER.error(f"Device index {device_index} out of range for home_devices[{home_id}]")
+                return
+            deviceID = self.home_devices[home_id][device_index]
+            state = int(packet[27]) > 0
+            brightness = int(packet[28]) if state else 0
+            if deviceID in self.cync_switches:
+                self.cync_switches[deviceID].update_switch(state, brightness,
+                                                            self.cync_switches[deviceID].color_temp,
+                                                            self.cync_switches[deviceID].rgb)
+        elif len(packet) >= 25 and packet[13] == 84:
+            # Parse motion and ambient light sensor packet
+            device_index = int(packet[16])
+            if device_index >= len(self.home_devices[home_id]):
+                _LOGGER.error(f"Device index {device_index} out of range for home_devices[{home_id}]")
+                return
+            deviceID = self.home_devices[home_id][device_index]
+            motion = int(packet[22]) > 0
+            ambient_light = int(packet[24]) > 0
+            if deviceID in self.cync_motion_sensors:
+                self.cync_motion_sensors[deviceID].update_motion_sensor(motion)
+            if deviceID in self.cync_ambient_light_sensors:
+                self.cync_ambient_light_sensors[deviceID].update_ambient_light_sensor(ambient_light)
+        elif len(packet) > 51 and packet[13] == 82:
+            # Parse initial state packet
+            switch_id = str(struct.unpack(">I", packet[0:4])[0])
+            home_id = self.switchID_to_homeID.get(switch_id)
+            if home_id is None:
+                _LOGGER.error(f"switch_id {switch_id} not found in switchID_to_homeID")
+                return
+            self._add_connected_devices(switch_id, home_id)
+            payload = packet[22:]
+            while len(payload) > 24:
+                device_index = int(payload[0])
+                if device_index >= len(self.home_devices[home_id]):
+                    _LOGGER.error(f"Device index {device_index} out of range for home_devices[{home_id}]")
+                    break
+                deviceID = self.home_devices[home_id][device_index]
+                if deviceID in self.cync_switches:
+                    if self.cync_switches[deviceID].elements > 1:
+                        for i in range(self.cync_switches[deviceID].elements):
+                            idx = (i + 1) * 256 + device_index
+                            if idx >= len(self.home_devices[home_id]):
+                                _LOGGER.error(f"Device index {idx} out of range for home_devices[{home_id}]")
+                                continue
+                            device_id = self.home_devices[home_id][idx]
+                            state = (int(payload[12]) >> i) & int(payload[8]) > 0
+                            brightness = 100 if state else 0
+                            self.cync_switches[device_id].update_switch(state, brightness,
+                                                                        self.cync_switches[device_id].color_temp,
+                                                                        self.cync_switches[device_id].rgb)
+                    else:
+                        state = int(payload[8]) > 0
+                        brightness = int(payload[12]) if state else 0
+                        color_temp = int(payload[16])
+                        rgb = {
+                            'r': int(payload[20]),
+                            'g': int(payload[21]),
+                            'b': int(payload[22]),
+                            'active': int(payload[16]) == 254
+                        }
+                        self.cync_switches[deviceID].update_switch(state, brightness, color_temp, rgb)
+                payload = payload[24:]
+
+    async def _handle_packet_type_131(self, packet: bytes):
+        """
+        Handle packets with packet_type 131.
+        """
+        _LOGGER.debug("Handling packet type 131")
+        if len(packet) < 4:
+            _LOGGER.error("Packet type 131 too short to process")
+            return
+
+        switch_id = str(struct.unpack(">I", packet[0:4])[0])
+        home_id = self.switchID_to_homeID.get(switch_id)
+
+        if home_id is None:
+            _LOGGER.error(f"switch_id {switch_id} not found in switchID_to_homeID")
+            return
+
+        if len(packet) >= 33 and packet[13] == 219:
+            # Parse state and brightness change packet
+            device_index = int(packet[21])
+            if device_index >= len(self.home_devices[home_id]):
+                _LOGGER.error(f"Device index {device_index} out of range for home_devices[{home_id}]")
+                return
+            deviceID = self.home_devices[home_id][device_index]
+            state = int(packet[27]) > 0
+            brightness = int(packet[28]) if state else 0
+            if deviceID in self.cync_switches:
+                self.cync_switches[deviceID].update_switch(state, brightness,
+                                                            self.cync_switches[deviceID].color_temp,
+                                                            self.cync_switches[deviceID].rgb)
+        elif len(packet) >= 25 and packet[13] == 84:
+            # Parse motion and ambient light sensor packet
+            device_index = int(packet[16])
+            if device_index >= len(self.home_devices[home_id]):
+                _LOGGER.error(f"Device index {device_index} out of range for home_devices[{home_id}]")
+                return
+            deviceID = self.home_devices[home_id][device_index]
+            motion = int(packet[22]) > 0
+            ambient_light = int(packet[24]) > 0
+            if deviceID in self.cync_motion_sensors:
+                self.cync_motion_sensors[deviceID].update_motion_sensor(motion)
+            if deviceID in self.cync_ambient_light_sensors:
+                self.cync_ambient_light_sensors[deviceID].update_ambient_light_sensor(ambient_light)
+
+    async def _handle_packet_type_67(self, packet: bytes):
+        """
+        Handle packets with packet_type 67.
+        """
+        _LOGGER.debug("Handling packet type 67")
+        if len(packet) < 7:
+            _LOGGER.error("Packet type 67 too short to process")
+            return
+
+        # Check specific bytes for packet validity
+        if int(packet[4]) != 1 or int(packet[5]) != 1 or int(packet[6]) != 6:
+            _LOGGER.warning("Packet type 67 does not match expected pattern. Skipping.")
+            return
+
+        switch_id = str(struct.unpack(">I", packet[0:4])[0])
+        home_id = self.switchID_to_homeID.get(switch_id)
+
+        if home_id is None:
+            _LOGGER.error(f"switch_id {switch_id} not found in switchID_to_homeID")
+            return
+
+        payload = packet[7:]
+        while len(payload) >= 19:
+            device_index = int(payload[3])
+            if device_index >= len(self.home_devices[home_id]):
+                _LOGGER.error(f"Device index {device_index} out of range for home_devices[{home_id}]")
+                break
+            deviceID = self.home_devices[home_id][device_index]
+            if deviceID in self.cync_switches:
+                if self.cync_switches[deviceID].elements > 1:
+                    for i in range(self.cync_switches[deviceID].elements):
+                        idx = (i + 1) * 256 + device_index
+                        if idx >= len(self.home_devices[home_id]):
+                            _LOGGER.error(f"Device index {idx} out of range for home_devices[{home_id}]")
+                            continue
+                        device_id = self.home_devices[home_id][idx]
+                        state = (int(payload[5]) >> i) & int(payload[4]) > 0
+                        brightness = 100 if state else 0
+                        self.cync_switches[device_id].update_switch(state, brightness,
+                                                                    self.cync_switches[device_id].color_temp,
+                                                                    self.cync_switches[device_id].rgb)
+                else:
+                    state = int(payload[4]) > 0
+                    brightness = int(payload[5]) if state else 0
+                    color_temp = int(payload[6])
+                    rgb = {
+                        'r': int(payload[7]),
+                        'g': int(payload[8]),
+                        'b': int(payload[9]),
+                        'active': int(payload[6]) == 254
+                    }
+                    self.cync_switches[deviceID].update_switch(state, brightness, color_temp, rgb)
+            payload = payload[19:]
+
+    async def _handle_packet_type_171(self, packet: bytes):
+        """
+        Handle packets with packet_type 171.
+        """
+        _LOGGER.debug("Handling packet type 171")
+        if len(packet) < 4:
+            _LOGGER.error("Packet type 171 too short to process")
+            return
+
+        switch_id = str(struct.unpack(">I", packet[0:4])[0])
+        home_id = self.switchID_to_homeID.get(switch_id)
+
+        if home_id is None:
+            _LOGGER.error(f"switch_id {switch_id} not found in switchID_to_homeID")
+            return
+
+        self._add_connected_devices(switch_id, home_id)
+
+    async def _handle_packet_type_123(self, packet: bytes):
+        """
+        Handle packets with packet_type 123.
+        """
+        _LOGGER.debug("Handling packet type 123")
+        if len(packet) < 6:
+            _LOGGER.error("Packet type 123 too short to process")
+            return
+
+        seq = str(struct.unpack(">H", packet[4:6])[0])
+        command_received = self.pending_commands.get(seq)
+        if command_received is not None:
+            command_received(seq)
+            _LOGGER.debug(f"Command with sequence {seq} acknowledged.")
+        else:
+            _LOGGER.warning(f"No pending command found for sequence {seq}.")
+
+    async def _handle_packet_type_168(self, packet: bytes):
+        """
+        Handle packets with packet_type 168.
+        """
+        _LOGGER.debug("Handling packet type 168")
+        if len(packet) < 8:
+            _LOGGER.warning("Packet type 168 received with insufficient length.")
+            return
+
+        # Example: Parsing based on observed content structure
+        # Assuming the first 4 bytes are a switch_id, next 4 bytes are data
+        switch_id = struct.unpack(">I", packet[0:4])[0]
+        data = packet[4:8]
+        _LOGGER.debug(f"Packet type 168 - Switch ID: {switch_id}, Data: {data.hex()}")
+
+        # Implement specific handling logic here based on data
+        # For example, updating device states, logging, etc.
+        # Placeholder example:
+        # self.cync_switches[str(switch_id)].update_some_state(data)
+
+    async def _handle_packet_type_0(self, packet: bytes):
+        """
+        Handle packets with packet_type 0.
+        """
+        _LOGGER.warning("Received packet type 0 with length 0. This might indicate misalignment or malformed data.")
+        # Implement additional logic if necessary, such as resetting the connection or re-synchronizing
+        # For example, you might choose to clear the buffer or attempt to realign
+        # Currently, we simply log the occurrence and skip
+
+    async def _handle_unhandled_packet(self, packet_type: int, packet_length: int, packet: bytes):
+        """
+        Handle unhandled packet types gracefully.
+        """
+        _LOGGER.warning(f"Unhandled packet type: {packet_type}, packet length: {packet_length}, content: {packet.hex()}")
+        # Optionally, implement logic to handle or ignore these packets
 
     async def _maintain_connection(self):
         while not self.shutting_down:
