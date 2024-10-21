@@ -393,7 +393,7 @@ class CyncHub:
                             if command_received is not None:
                                 command_received(seq)
                         else:
-                            _LOGGER.warning(f"Unhandled packet type: {packet_type}")
+                            _LOGGER.warning(f"Unhandled packet type: {packet_type}, packet length: {len(packet)}, content: {packet.hex()}")
                     else:
                         _LOGGER.error("Packet length mismatch.")
                 except Exception as e:
