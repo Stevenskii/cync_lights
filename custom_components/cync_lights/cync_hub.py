@@ -144,60 +144,69 @@ class StatusPaginatedResponse:
                 f"ct={self.ct}, is_on={self.is_on}, use_rgb={self.use_rgb}, rgb={self.rgb})")
 
 class CyncHub:
-    def __init__(self, hass: Any, data: Dict[str, Any], options: Dict[str, Any]) -> None:
-        """Initialize the CyncHub."""
+    def __init__(
+        self,
+        hass: Any,
+        data: Dict[str, Any],
+        options: Dict[str, Any],
+    ) -> None:
+        """
+        Initialize the CyncHub.
+        """
         self.hass = hass
         self.host = data.get("host", DEFAULT_HOST)
         self.port = data.get("port", DEFAULT_PORT)
         self.login_code = data.get("login_code", b'')
-        # SSL context is now set up asynchronously, so it's not initialized here
         self.use_ssl = options.get("use_ssl", True)
-        
-        # SSL context will be initialized asynchronously
-        self.ssl_context: Optional[ssl.SSLContext] = None
 
+        # Initialize device attributes
+        self.cync_rooms = {room_id: CyncRoom(room_id, room_info, self) for room_id, room_info in user_data['cync_config']['rooms'].items()}
+        self.cync_switches = {
+            device_id: CyncSwitch(device_id, switch_info, self.cync_rooms.get(switch_info['room'], None), self)
+            for device_id, switch_info in user_data['cync_config']['devices'].items() if switch_info.get("ONOFF", False)
+        }
+        self.cync_motion_sensors = {
+            device_id: CyncMotionSensor(device_id, device_info, self.cync_rooms.get(device_info['room'], None))
+            for device_id, device_info in user_data['cync_config']['devices'].items() if device_info.get("MOTION", False)
+        }
+        self.cync_ambient_light_sensors = {
+            device_id: CyncAmbientLightSensor(device_id, device_info, self.cync_rooms.get(device_info['room'], None))
+            for device_id, device_info in user_data['cync_config']['devices'].items() if device_info.get("AMBIENT_LIGHT", False)
+        }
+        self.switchID_to_deviceIDs = {
+            device_info.switch_id: [dev_id for dev_id, dev_info in self.cync_switches.items() if dev_info.switch_id == device_info.switch_id]
+            for device_id, device_info in self.cync_switches.items() if int(device_info.switch_id) > 0
+        }
+
+        self.ssl_context: Optional[ssl.SSLContext] = None
         self.reader: Optional[asyncio.StreamReader] = None
         self.writer: Optional[asyncio.StreamWriter] = None
         self.logged_in = False
         self.shutting_down = False
 
-        # Device attributes
-        self.cync_switches = {}
-        self.cync_motion_sensors = {}
-        self.cync_rooms = {}
-        self.cync_fans = {}
-
         self.buffer = b''
         self.packet_handlers: Dict[int, Callable[[bool, bytes], asyncio.Future]] = {}
 
-        # Sequence number management
         self.seq_num = 0
         self.seq_lock = threading.Lock()
 
-        # Pending commands: seq_num -> callback
         self.pending_commands: Dict[int, Callable[[str], None]] = {}
         self.pending_commands_lock = threading.Lock()
 
-        # Event loop
-        self.loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(self.loop)
-
-        # Start the TCP client in a separate thread
-        self.client_thread = threading.Thread(target=self.start_client, daemon=True)
-        self.client_thread.start()
+        self.loop = asyncio.get_event_loop()
 
     async def setup_ssl_context(self) -> None:
         """
-        Set up SSL context asynchronously.
+        Set up SSL context asynchronously using Home Assistant's async_add_executor_job.
         """
         if self.use_ssl:
             _LOGGER.debug("Setting up SSL context asynchronously.")
-            self.ssl_context = ssl.create_default_context()
-            await asyncio.sleep(0)  # Yield control to avoid blocking
+            self.ssl_context = await self.hass.async_add_executor_job(ssl.create_default_context)
             _LOGGER.debug("SSL context setup complete.")
         else:
             self.ssl_context = None
             _LOGGER.debug("SSL is disabled for CyncHub.")
+
 
     def start_client(self):
         """
