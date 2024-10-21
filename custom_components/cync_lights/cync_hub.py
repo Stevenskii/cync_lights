@@ -205,6 +205,7 @@ class CyncHub:
         [room.initialize() for room in self.cync_rooms.values() if not room.is_subgroup]
     
         self.loop = asyncio.get_event_loop()
+        
     def get_seq_num(self):
         """Thread-safe method to get the next sequence number."""
         with self.seq_lock:
@@ -905,16 +906,16 @@ class CyncRoom:
                 color_temp = 50  # Default mid value
 
             # Send Set Status (On)
-            status_packet = self.hub._create_set_status_packet(controller, seq, device_index=0, state=1)
+            status_packet = self.hub.create_set_status_packet(controller, seq, device_index=0, state=1)
             self.hub.send_request(status_packet)
 
             # Send Set Brightness
-            brightness_packet = self.hub._create_set_brightness_packet(controller, seq, device_index=0, brightness=brightness_value)
+            brightness_packet = self.hub.create_set_lum_packet(controller, seq, device_index=0, brightness=brightness_value)
             self.hub.send_request(brightness_packet)
 
             # Send Set Color Temperature
             if self.support_color_temp:
-                color_temp_packet = self.hub._create_set_color_temp_packet(controller, seq, device_index=0, color_temp=color_temp)
+                color_temp_packet = self.hub.create_set_ct_packet(controller, seq, device_index=0, color_temp=color_temp)
                 self.hub.send_request(color_temp_packet)
 
             self.hub.pending_commands[seq] = self.command_received
@@ -934,7 +935,7 @@ class CyncRoom:
             controller = self.controllers[attempts % len(self.controllers)] if self.controllers else self.default_controller
 
             # Send Set Status (Off)
-            status_packet = self.hub._create_set_status_packet(controller, seq, device_index=0, state=0)
+            status_packet = self.hub.create_set_status_packet(controller, seq, device_index=0, state=0)
             self.hub.send_request(status_packet)
 
             self.hub.pending_commands[seq] = self.command_received
@@ -1161,22 +1162,22 @@ class CyncSwitch:
             controller = int(self.controllers[attempts % len(self.controllers)] if self.controllers else self.default_controller)
 
             # Send Set Status (On)
-            status_packet = self.hub._create_set_status_packet(controller, seq, self.mesh_id_int, 1)
+            status_packet = self.hub.create_set_status_packet(controller, seq, self.mesh_id_int, 1)
             self.hub.send_request(status_packet)
 
             # Send Set Brightness
             if self.support_brightness:
-                brightness_packet = self.hub._create_set_brightness_packet(controller, seq, self.mesh_id_int, brightness_value)
+                brightness_packet = self.hub.create_set_lum_packet(controller, seq, self.mesh_id_int, brightness_value)
                 self.hub.send_request(brightness_packet)
 
             # Send Set Color Temperature
             if self.support_color_temp and color_temp is not None:
-                color_temp_packet = self.hub._create_set_color_temp_packet(controller, seq, self.mesh_id_int, color_temp)
+                color_temp_packet = self.hub.create_set_ct_packet(controller, seq, self.mesh_id_int, color_temp)
                 self.hub.send_request(color_temp_packet)
 
             # Send Set RGB
             if self.support_rgb and rgb_color is not None:
-                rgb_packet = self.hub._create_set_rgb_packet(controller, seq, self.mesh_id_int, r, g, b)
+                rgb_packet = self.hub.create_set_rgb_packet(controller, seq, self.mesh_id_int, r, g, b)
                 self.hub.send_request(rgb_packet)
 
             # Implement effect and transition commands here if applicable
@@ -1198,7 +1199,7 @@ class CyncSwitch:
             controller = int(self.controllers[attempts % len(self.controllers)] if self.controllers else self.default_controller)
 
             # Send Set Status (Off)
-            status_packet = self.hub._create_set_status_packet(controller, seq, self.mesh_id_int, 0)
+            status_packet = self.hub.create_set_status_packet(controller, seq, self.mesh_id_int, 0)
             self.hub.send_request(status_packet)
 
             self.hub.pending_commands[seq] = self.command_received
