@@ -160,6 +160,11 @@ class CyncHub:
         self.use_ssl = options.get("use_ssl", True)
 
         # Initialize device attributes
+        self.home_devices = user_data['cync_config']['home_devices']
+        self.home_controllers = user_data['cync_config']['home_controllers']
+        self.switchID_to_homeID = user_data['cync_config']['switchID_to_homeID']
+        self.connected_devices = {home_id: [] for home_id in self.home_controllers.keys()}
+        self.shutting_down = False
         self.cync_rooms = {room_id: CyncRoom(room_id, room_info, self) for room_id, room_info in user_data['cync_config']['rooms'].items()}
         self.cync_switches = {
             device_id: CyncSwitch(device_id, switch_info, self.cync_rooms.get(switch_info['room'], None), self)
@@ -177,6 +182,10 @@ class CyncHub:
             device_info.switch_id: [dev_id for dev_id, dev_info in self.cync_switches.items() if dev_info.switch_id == device_info.switch_id]
             for device_id, device_info in self.cync_switches.items() if int(device_info.switch_id) > 0
         }
+        self.connected_devices_updated = False
+        self.options = options
+        [room.initialize() for room in self.cync_rooms.values() if room.is_subgroup]
+        [room.initialize() for room in self.cync_rooms.values() if not room.is_subgroup]
 
         self.ssl_context: Optional[ssl.SSLContext] = None
         self.reader: Optional[asyncio.StreamReader] = None
