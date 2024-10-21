@@ -412,11 +412,168 @@ class CyncHub:
         packet = self._create_set_rgb_packet(switch_id, seq, int.from_bytes(mesh_id, 'big'), r, g, b)
         self.loop.call_soon_threadsafe(self.send_request, packet)
 
-import asyncio
-
 class CyncRoom:
+    def __init__(self, room_id: str, room_info: Dict[str, Any], hub) -> None:
+        """Initialize the Cync Room."""
+        self.hub = hub
+        self.room_id = room_id
+        self.home_id = room_id.split('-')[0]
+        self.name = room_info.get('name', 'unknown')
+        self.home_name = room_info.get('home_name', 'unknown')
+        self.parent_room = room_info.get('parent_room', 'unknown')
+        self.mesh_id = int(room_info.get('mesh_id', 0)).to_bytes(2, 'little')
+        self.power_state = False
+        self.brightness = 0
+        self.color_temp_kelvin = 0
+        self.rgb = {'r': 0, 'g': 0, 'b': 0, 'active': False}
+        self.switches = room_info.get('switches', [])
+        self.subgroups = room_info.get('subgroups', [])
+        self.is_subgroup = room_info.get('isSubgroup', False)
+        self.all_room_switches = self.switches.copy()
+        self.controllers: List[str] = []
+        self.default_controller = room_info.get('room_controller', self.hub.home_controllers[self.home_id][0])
+        self._update_callback: Optional[Callable[[], None]] = None
+        self._update_parent_room: Optional[Callable[[], None]] = None
+        self.support_brightness = False
+        self.support_color_temp = False
+        self.support_rgb = False
+        self.switches_support_brightness = []
+        self.switches_support_color_temp = []
+        self.switches_support_rgb = []
+        self.groups_support_brightness = []
+        self.groups_support_color_temp = []
+        self.groups_support_rgb = []
+        self._command_timeout = 0.5
+        self._command_retry_time = 5
 
-    # ... [other methods and initializations] ...
+    def initialize(self):
+        """Initialize supported features and register update functions for switches and subgroups."""
+        self.switches_support_brightness = [
+            device_id for device_id in self.switches if self.hub.cync_switches[device_id].support_brightness
+        ]
+        self.switches_support_color_temp = [
+            device_id for device_id in self.switches if self.hub.cync_switches[device_id].support_color_temp
+        ]
+        self.switches_support_rgb = [
+            device_id for device_id in self.switches if self.hub.cync_switches[device_id].support_rgb
+        ]
+        self.groups_support_brightness = [
+            room_id for room_id in self.subgroups if self.hub.cync_rooms[room_id].support_brightness
+        ]
+        self.groups_support_color_temp = [
+            room_id for room_id in self.subgroups if self.hub.cync_rooms[room_id].support_color_temp
+        ]
+        self.groups_support_rgb = [
+            room_id for room_id in self.subgroups if self.hub.cync_rooms[room_id].support_rgb
+        ]
+        self.support_brightness = (len(self.switches_support_brightness) + len(self.groups_support_brightness)) > 0
+        self.support_color_temp = (len(self.switches_support_color_temp) + len(self.groups_support_color_temp)) > 0
+        self.support_rgb = (len(self.switches_support_rgb) + len(self.groups_support_rgb)) > 0
+        for switch_id in self.switches:
+            self.hub.cync_switches[switch_id].register_room_updater(self.update_room)
+        for subgroup in self.subgroups:
+            self.hub.cync_rooms[subgroup].register_room_updater(self.update_room)
+            self.all_room_switches.extend(self.hub.cync_rooms[subgroup].switches)
+        for subgroup in self.subgroups:
+            self.hub.cync_rooms[subgroup].all_room_switches = self.all_room_switches
+
+    def register(self, update_callback) -> None:
+        """Register callback to be called when the room changes state."""
+        self._update_callback = update_callback
+
+    def reset(self) -> None:
+        """Remove previously registered callback."""
+        self._update_callback = None
+
+    def register_room_updater(self, parent_updater):
+        """Register callback for parent room updates."""
+        self._update_parent_room = parent_updater
+
+    @property
+    def max_color_temp_kelvin(self) -> int:
+        """Return maximum supported color temperature in Kelvin."""
+        return 7000  # Adjust according to your devices' specifications
+
+    @property
+    def min_color_temp_kelvin(self) -> int:
+        """Return minimum supported color temperature in Kelvin."""
+        return 2000  # Adjust according to your devices' specifications
+
+    async def turn_on(
+        self,
+        brightness: Optional[int] = None,
+        color_temp_kelvin: Optional[int] = None,
+        **kwargs: Any
+    ) -> None:
+        """Turn on the room lights."""
+        attempts = 0
+        update_received = False
+        while not update_received and attempts < int(self._command_retry_time / self._command_timeout):
+            seq = str(self.hub.get_seq_num())
+            controller = self.controllers[attempts % len(self.controllers)] if self.controllers else self.default_controller
+
+            # Handle brightness
+            if brightness is not None:
+                brightness_value = brightness
+            else:
+                brightness_value = self.brightness if self.brightness else 100  # Default to 100% if no brightness is set
+
+            # Handle color temperature
+            if color_temp_kelvin is not None:
+                # Calculate color_temp as a percentage
+                color_temp = round(
+                    (
+                        (color_temp_kelvin - self.min_color_temp_kelvin) /
+                        (self.max_color_temp_kelvin - self.min_color_temp_kelvin)
+                    ) * 100
+                )
+            else:
+                color_temp = 50  # Default mid value
+
+            # Send Set Status (On)
+            status_packet = self.hub._create_set_status_packet(controller, seq, device_index=0, state=1)
+            self.hub.send_request(status_packet)
+
+            # Send Set Brightness
+            brightness_packet = self.hub._create_set_brightness_packet(controller, seq, device_index=0, brightness=brightness_value)
+            self.hub.send_request(brightness_packet)
+
+            # Send Set Color Temperature
+            if self.support_color_temp:
+                color_temp_packet = self.hub._create_set_color_temp_packet(controller, seq, device_index=0, color_temp=color_temp)
+                self.hub.send_request(color_temp_packet)
+
+            self.hub.pending_commands[seq] = self.command_received
+            await asyncio.sleep(self._command_timeout)
+            if self.hub.pending_commands.get(seq) is not None:
+                self.hub.pending_commands.pop(seq)
+                attempts += 1
+            else:
+                update_received = True
+
+    async def turn_off(self, **kwargs: Any) -> None:
+        """Turn off the room lights."""
+        attempts = 0
+        update_received = False
+        while not update_received and attempts < int(self._command_retry_time / self._command_timeout):
+            seq = self.hub.get_seq_num()
+            controller = self.controllers[attempts % len(self.controllers)] if self.controllers else self.default_controller
+
+            # Send Set Status (Off)
+            status_packet = self.hub._create_set_status_packet(controller, seq, device_index=0, state=0)
+            self.hub.send_request(status_packet)
+
+            self.hub.pending_commands[seq] = self.command_received
+            await asyncio.sleep(self._command_timeout)
+            if self.hub.pending_commands.get(seq, None) is not None:
+                self.hub.pending_commands.pop(seq)
+                attempts += 1
+            else:
+                update_received = True
+
+    def command_received(self, seq):
+        """Handle command acknowledgment from the Cync server."""
+        self.hub.pending_commands.pop(seq, None)
 
     def update_room(self):
         """Update the current state of the room."""
@@ -476,9 +633,9 @@ class CyncRoom:
                 _rgb['r'] = _rgb['g'] = _rgb['b'] = 0
 
             _rgb['active'] = any(
-                self.hub.cync_switches[device_id].rgb['active'] for device_id in self.switches_support_rgb
+                self.hub.cync_switches[device_id].rgb.get('active', False) for device_id in self.switches_support_rgb
             ) or any(
-                self.hub.cync_rooms[room_id].rgb['active'] for room_id in self.groups_support_rgb
+                self.hub.cync_rooms[room_id].rgb.get('active', False) for room_id in self.groups_support_rgb
             )
         else:
             _rgb = self.rgb
@@ -497,6 +654,24 @@ class CyncRoom:
             self.publish_update()
             if self._update_parent_room:
                 asyncio.run_coroutine_threadsafe(self._update_parent_room(), self.hub.hass.loop)
+
+    def update_controllers(self):
+        """Update the list of responsive, Wi-Fi connected controller devices."""
+        connected_devices = self.hub.connected_devices[self.home_id]
+        controllers = [
+            self.hub.cync_switches[dev_id].switch_id
+            for dev_id in self.all_room_switches if dev_id in connected_devices
+        ]
+        others_available = [
+            self.hub.cync_switches[dev_id].switch_id
+            for dev_id in connected_devices if dev_id not in self.all_room_switches
+        ]
+        self.controllers = controllers + others_available if connected_devices else [self.default_controller]
+
+    def publish_update(self):
+        """Publish the update to Home Assistant."""
+        if self._update_callback:
+            asyncio.run_coroutine_threadsafe(self._update_callback(), self.hub.hass.loop)
 
 
 class CyncSwitch:
