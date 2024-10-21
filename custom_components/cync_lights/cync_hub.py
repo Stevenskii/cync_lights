@@ -341,7 +341,7 @@ class CyncHub:
         data_payload += bytes([0, 0])  # Unknown bytes (2 bytes)
         data_payload += bytes([state])  # Status (1 byte)
         data_payload += bytes([0])      # Padding or additional data (1 byte)
-        packet = self._build_pipe_packet(int(switch_id), seq, PIPE_SUBTYPE_SET_STATUS, data_payload)
+        packet = self._build_pipe_packet(int(switch_id), int(seq), PIPE_SUBTYPE_SET_STATUS, data_payload)
         return packet
 
     def _create_set_brightness_packet(self, switch_id: int, seq: int, device_index: int, brightness: int) -> bytes:
@@ -353,7 +353,7 @@ class CyncHub:
         data_payload += bytes([0, PIPE_SUBTYPE_SET_LUM])  # Command, repeated (2 bytes)
         data_payload += bytes([0, 0])  # Unknown bytes (2 bytes)
         data_payload += bytes([brightness])  # Brightness (1 byte)
-        packet = self._build_pipe_packet(int(switch_id), seq, PIPE_SUBTYPE_SET_LUM, data_payload)
+        packet = self._build_pipe_packet(int(switch_id), int(seq), PIPE_SUBTYPE_SET_LUM, data_payload)
         return packet
 
     def _create_set_color_temp_packet(self, switch_id: int, seq: int, device_index: int, color_temp: int) -> bytes:
@@ -365,18 +365,18 @@ class CyncHub:
         data_payload += bytes([0, PIPE_SUBTYPE_SET_CT])  # Command, repeated (2 bytes)
         data_payload += bytes([0, 0])  # Unknown bytes (2 bytes)
         data_payload += bytes([0x05, color_temp])  # Command parameters (2 bytes)
-        packet = self._build_pipe_packet(int(switch_id), seq, PIPE_SUBTYPE_SET_CT, data_payload)
+        packet = self._build_pipe_packet(int(switch_id), int(seq), PIPE_SUBTYPE_SET_CT, data_payload)
         return packet
 
     def _create_set_rgb_packet(self, switch_id: int, seq: int, device_index: int, r: int, g: int, b: int) -> bytes:
         """Create a Set RGB packet."""
         data_payload = bytearray()
-        data_payload += bytes([0, 0, 0, 0, 0])  # Unknown bytes (5 bytes)
-        data_payload += struct.pack('>H', device_index)  # Device index (2 bytes, big-endian)
-        data_payload += bytes([0, PIPE_SUBTYPE_SET_CT])  # Command, repeated (2 bytes)
-        data_payload += bytes([0, 0])  # Unknown bytes (2 bytes)
-        data_payload += bytes([0x04, r, g, b])  # Command parameters (4 bytes)
-        packet = self._build_pipe_packet(int(switch_id), seq, PIPE_SUBTYPE_SET_CT, data_payload)
+        data_payload += bytes([0, 0, 0, 0, 0])   # Unknown bytes (5 bytes)
+        data_payload += struct.pack('>H', device_index)   # Device index (2 bytes, big-endian)
+        data_payload += bytes([0, PIPE_SUBTYPE_SET_CT])   # Command, repeated (2 bytes)
+        data_payload += bytes([0, 0])   # Unknown bytes (2 bytes)
+        data_payload += bytes([0x04, r, g, b])   # Command parameters (4 bytes)
+        packet = self._build_pipe_packet(int(switch_id), int(seq), PIPE_SUBTYPE_SET_CT, data_payload)
         return packet
 
     def _create_get_status_packet(self, switch_id: int, seq: int) -> bytes:
@@ -673,29 +673,34 @@ class CyncRoom:
         if self._update_callback:
             asyncio.run_coroutine_threadsafe(self._update_callback(), self.hub.hass.loop)
 
-
 class CyncSwitch:
-
     def __init__(self, device_id, switch_info, room, hub) -> None:
         self.hub = hub
         self.device_id = device_id
         self.switch_id = switch_info.get('switch_id', '0')
-        self.home_id = [home_id for home_id, home_devices in self.hub.home_devices.items() if self.device_id in home_devices][0]
+        self.home_id = [
+            home_id for home_id, home_devices in self.hub.home_devices.items()
+            if self.device_id in home_devices
+        ][0]
         self.name = switch_info.get('name', 'unknown')
         self.home_name = switch_info.get('home_name', 'unknown')
         self.mesh_id = switch_info.get('mesh_id', 0).to_bytes(2, 'little')
+        self.mesh_id_int = int.from_bytes(self.mesh_id, 'big')  # Convert mesh_id to integer
         self.room = room
         self.power_state = False
         self.brightness = 0
         self.color_temp_kelvin = 0
         self.rgb = {'r': 0, 'g': 0, 'b': 0, 'active': False}
-        self.default_controller = switch_info.get('switch_controller', self.hub.home_controllers[self.home_id][0])
-        self.controllers: List[str] = []
+        self.effect = None
+        self.transition = None
+        self.default_controller = int(switch_info.get('switch_controller', self.hub.home_controllers[self.home_id][0]))
+        self.controllers: List[int] = []
         self._update_callback: Optional[Callable[[], None]] = None
         self._update_parent_room: Optional[Callable[[], None]] = None
         self.support_brightness = switch_info.get('BRIGHTNESS', False)
         self.support_color_temp = switch_info.get('COLORTEMP', False)
         self.support_rgb = switch_info.get('RGB', False)
+        self.support_effects = True  # Assuming effects are supported
         self.plug = switch_info.get('PLUG', False)
         self.fan = switch_info.get('FAN', False)
         self.elements = switch_info.get('MULTIELEMENT', 1)
@@ -728,45 +733,79 @@ class CyncSwitch:
         self,
         brightness: Optional[int] = None,
         color_temp_kelvin: Optional[int] = None,
+        rgb_color: Optional[Tuple[int, int, int]] = None,
+        effect: Optional[str] = None,
+        transition: Optional[float] = None,
         **kwargs: Any
     ) -> None:
-        """Turn on the light with optional brightness and color tone."""
+        """Turn on the light with optional brightness, color temperature, RGB color, effect, and transition."""
         attempts = 0
         update_received = False
 
         # Convert brightness to percentage if needed
         if brightness is not None:
-            brightness_value = brightness
+            brightness_value = max(1, min(100, round((brightness / 255) * 100)))
         else:
             brightness_value = self.brightness if self.brightness else 100  # Default to 100% if no brightness is set
 
         # Handle color temperature
         if color_temp_kelvin is not None:
-            color_temp = round(
+            color_temp = max(0, min(100, round(
                 (
                     (color_temp_kelvin - self.min_color_temp_kelvin) /
                     (self.max_color_temp_kelvin - self.min_color_temp_kelvin)
                 ) * 100
-            )
+            )))
         else:
-            color_temp = 50  # Default mid value
+            color_temp = None
+
+        # Handle RGB color
+        if rgb_color is not None:
+            r, g, b = rgb_color
+        else:
+            r, g, b = self.rgb['r'], self.rgb['g'], self.rgb['b']
+
+        # Handle effects
+        if effect is not None:
+            # Implement effect handling logic here
+            self.effect = effect
+            # For example, map the effect name to an effect index or code
+            effect_index = self.hub.effect_mapping.get(effect)
+            if effect_index is not None:
+                # Send effect command to the device
+                pass  # Placeholder for effect command implementation
+
+        # Handle transition
+        if transition is not None:
+            # Implement transition handling logic here
+            self.transition = transition
+            # For example, set the transition time for the device
+            pass  # Placeholder for transition command implementation
 
         while not update_received and attempts < int(self._command_retry_time / self._command_timeout):
-            seq = str(self.hub.get_seq_num())
-            controller = self.controllers[attempts % len(self.controllers)] if self.controllers else self.default_controller
+            seq = self.hub.get_seq_num()
+            controller = int(self.controllers[attempts % len(self.controllers)] if self.controllers else self.default_controller)
 
             # Send Set Status (On)
-            status_packet = self.hub._create_set_status_packet(controller, seq, device_index=0, state=1)
+            status_packet = self.hub._create_set_status_packet(controller, seq, self.mesh_id_int, 1)
             self.hub.send_request(status_packet)
 
             # Send Set Brightness
-            brightness_packet = self.hub._create_set_brightness_packet(controller, seq, device_index=0, brightness=brightness_value)
-            self.hub.send_request(brightness_packet)
+            if self.support_brightness:
+                brightness_packet = self.hub._create_set_brightness_packet(controller, seq, self.mesh_id_int, brightness_value)
+                self.hub.send_request(brightness_packet)
 
-            # Send Set Color Tone
-            if self.support_color_temp:
-                color_tone_packet = self.hub._create_set_color_tone_packet(controller, seq, device_index=0, color_tone=color_temp)
-                self.hub.send_request(color_tone_packet)
+            # Send Set Color Temperature
+            if self.support_color_temp and color_temp is not None:
+                color_temp_packet = self.hub._create_set_color_temp_packet(controller, seq, self.mesh_id_int, color_temp)
+                self.hub.send_request(color_temp_packet)
+
+            # Send Set RGB
+            if self.support_rgb and rgb_color is not None:
+                rgb_packet = self.hub._create_set_rgb_packet(controller, seq, self.mesh_id_int, r, g, b)
+                self.hub.send_request(rgb_packet)
+
+            # Implement effect and transition commands here if applicable
 
             self.hub.pending_commands[seq] = self.command_received
             await asyncio.sleep(self._command_timeout)
@@ -782,10 +821,10 @@ class CyncSwitch:
         update_received = False
         while not update_received and attempts < int(self._command_retry_time / self._command_timeout):
             seq = self.hub.get_seq_num()
-            controller = self.controllers[attempts % len(self.controllers)] if self.controllers else self.default_controller
+            controller = int(self.controllers[attempts % len(self.controllers)] if self.controllers else self.default_controller)
 
             # Send Set Status (Off)
-            status_packet = self.hub._create_set_status_packet(controller, seq, device_index=0, state=0)
+            status_packet = self.hub._create_set_status_packet(controller, seq, self.mesh_id_int, 0)
             self.hub.send_request(status_packet)
 
             self.hub.pending_commands[seq] = self.command_received
@@ -797,13 +836,11 @@ class CyncSwitch:
                 update_received = True
 
     def command_received(self, seq):
-        """Remove command from hub.pending_commands when a reply is received from Cync server"""
+        """Handle command acknowledgment from the Cync server."""
         self.hub.pending_commands.pop(seq, None)
 
     def update_switch(self, state, brightness, color_temp=None, rgb=None):
         """Update the state of the switch as updates are received from the Cync server."""
-        self.update_received = True
-
         if color_temp is not None:
             # Calculate color_temp_kelvin from color_temp percentage
             self.color_temp_kelvin = round(
@@ -825,28 +862,29 @@ class CyncSwitch:
         if previous_state != new_state:
             self.power_state = state
             self.brightness = brightness if self.support_brightness and state else 100 if state else 0
-            self.color_temp_kelvin = color_temp if color_temp is not None else self.color_temp_kelvin
+            self.color_temp_kelvin = self.color_temp_kelvin
             self.rgb = rgb if rgb is not None else self.rgb
             self.publish_update()
             if self._update_parent_room:
-                asyncio.run_coroutine_threadsafe(self._update_parent_room(), self.hub.hass.loop)
+                self._update_parent_room()
 
     def update_controllers(self):
-        """Update the list of responsive, Wi-Fi connected controller devices"""
+        """Update the list of responsive, Wi-Fi connected controller devices."""
         connected_devices = self.hub.connected_devices[self.home_id]
         controllers = []
         if connected_devices:
             if int(self.switch_id) > 0 and self.device_id in connected_devices:
-                controllers.append(self.switch_id)
+                controllers.append(int(self.switch_id))
             if self.room:
                 controllers.extend(
-                    self.hub.cync_switches[device_id].switch_id
-                    for device_id in self.room.all_room_switches if device_id in connected_devices and device_id != self.device_id
+                    int(self.hub.cync_switches[device_id].switch_id)
+                    for device_id in self.room.all_room_switches
+                    if device_id in connected_devices and device_id != self.device_id
                 )
             others_available = [
-                self.hub.cync_switches[device_id].switch_id
+                int(self.hub.cync_switches[device_id].switch_id)
                 for device_id in connected_devices
-                if self.hub.cync_switches[device_id].switch_id not in controllers
+                if int(self.hub.cync_switches[device_id].switch_id) not in controllers
             ]
             # Remove duplicates while preserving order
             unique_others = []
@@ -860,9 +898,9 @@ class CyncSwitch:
             self.controllers = [self.default_controller]
 
     def publish_update(self):
+        """Publish the update to Home Assistant."""
         if self._update_callback:
-            asyncio.run_coroutine_threadsafe(self._update_callback(), self.hub.hass.loop)
-
+            self._update_callback()
 
 
 class CyncMotionSensor:
