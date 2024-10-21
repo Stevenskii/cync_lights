@@ -192,6 +192,8 @@ class CyncHub:
 
         self.pending_commands: Dict[int, Callable[[str], None]] = {}
         self.pending_commands_lock = threading.Lock()
+        [room.initialize() for room in self.cync_rooms.values() if room.is_subgroup]
+        [room.initialize() for room in self.cync_rooms.values() if not room.is_subgroup]
 
         self.loop = asyncio.get_event_loop()
 
