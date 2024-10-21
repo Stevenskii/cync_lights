@@ -148,7 +148,7 @@ class CyncHub:
         self.hass = hass
         self.host = data.get("host", DEFAULT_HOST)
         self.port = data.get("port", DEFAULT_PORT)
-        self.login_code = bytes(data.get("login_code", b''))
+        self.login_code = bytearray(data['cync_credentials'])
         self.use_ssl = options.get("use_ssl", True)
 
         # Initialize device attributes
