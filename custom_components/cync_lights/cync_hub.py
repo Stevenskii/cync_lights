@@ -862,6 +862,9 @@ class CyncRoom:
         attempts = 0
         update_received = False
         seq_ct = None  # Initialize seq_ct to None
+        seq_brightness=None
+        seq_rgb=None
+        seq_status=None
         while not update_received and attempts < int(self._command_retry_time / self._command_timeout):
             # Unique sequence numbers for each command
             seq_status = self.hub.get_seq_num()
@@ -1105,6 +1108,9 @@ class CyncSwitch:
         attempts = 0
         update_received = False
         seq_ct=None
+        seq_brightness=None
+        seq_rgb=None
+        seq_status=None
     
         # Convert brightness to percentage if needed
         if brightness is not None:
