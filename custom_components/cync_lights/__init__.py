@@ -1,6 +1,8 @@
 """The Cync Room Lights integration."""
 from __future__ import annotations
 
+import logging
+
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
@@ -12,19 +14,21 @@ from . import light, binary_sensor, switch, fan
 
 PLATFORMS: list[str] = ["light", "binary_sensor", "switch", "fan"]
 
+_LOGGER = logging.getLogger(__name__)
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Cync Room Lights from a config entry."""
     hass.data.setdefault(DOMAIN, {})
-    hub = CyncHub(entry.data, entry.options)
+
+    # Pass 'hass' to CyncHub
+    hub = CyncHub(hass, entry.data, entry.options)
     hass.data[DOMAIN][entry.entry_id] = hub
     hub.start_tcp_client()
 
-    # Forward the entry setups without causing a blocking call
+    # Forward the entry setups
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     return True
-
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
