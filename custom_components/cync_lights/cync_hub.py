@@ -183,7 +183,7 @@ class CyncHub:
             for device_id, device_info in self.cync_switches.items() if int(device_info.switch_id) > 0
         }
         self.connected_devices_updated = False
-        self.options = options
+        self.effect_mapping = self._parse_light_shows(data['cync_config'])
         [room.initialize() for room in self.cync_rooms.values() if room.is_subgroup]
         [room.initialize() for room in self.cync_rooms.values() if not room.is_subgroup]
 
@@ -203,8 +203,22 @@ class CyncHub:
         self.pending_commands_lock = threading.Lock()
         [room.initialize() for room in self.cync_rooms.values() if room.is_subgroup]
         [room.initialize() for room in self.cync_rooms.values() if not room.is_subgroup]
-
+    
         self.loop = asyncio.get_event_loop()
+        # Parse lightShows data and create effect mapping
+        
+
+    def _parse_light_shows(self, cync_config):
+        """Parse lightShows data from cync_config and create a mapping."""
+        effect_mapping = {}
+        homes = cync_config.get('homes', {})
+        for home_id, home_info in homes.items():
+            light_shows = home_info.get('lightShows', [])
+            for show in light_shows:
+                effect_name = show['name']
+                effect_index = show['index']
+                effect_mapping[effect_name] = show
+        return effect_mapping
 
     async def setup_ssl_context(self) -> None:
         """

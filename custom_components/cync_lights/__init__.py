@@ -44,7 +44,7 @@ async def async_setup_entry(
     # Forward the entry setup to all platforms defined in PLATFORMS
     for platform in PLATFORMS:
         hass.async_create_task(
-            hass.config_entries.async_forward_entry_setup(entry, platform)
+            hass.config_entries.async_forward_entry_setups(entry, platform)
         )
 
     return True
