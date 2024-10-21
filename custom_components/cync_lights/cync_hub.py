@@ -566,10 +566,10 @@ class CyncHub:
         try:
             if packet.type != PACKET_TYPE_PIPE:
                 return None
-            # Correctly extract sequence number from bytes 1-2
-            if len(packet.data) < 3:
+            # Correctly extract sequence number from bytes 4-5
+            if len(packet.data) < 6:
                 return None
-            seq_num = struct.unpack(">H", packet.data[1:3])[0]
+            seq_num = struct.unpack(">H", packet.data[4:6])[0]
             return seq_num
         except Exception as e:
             _LOGGER.error(f"Error extracting sequence number: {e}")
@@ -586,8 +586,8 @@ class CyncHub:
             0
         ])
         # Embed the sequence number into bytes 1-2 of the data
-        data[1] = (seq >> 8) & 0xFF  # High byte
-        data[2] = seq & 0xFF         # Low byte
+        data[4] = (seq >> 8) & 0xFF  # High byte
+        data[5] = seq & 0xFF         # Low byte
     
         packet = Packet(
             packet_type=PACKET_TYPE_PIPE,
@@ -609,8 +609,8 @@ class CyncHub:
             brightness
         ])
         # Embed the sequence number into bytes 1-2 of the data
-        data[1] = (seq >> 8) & 0xFF  # High byte
-        data[2] = seq & 0xFF         # Low byte
+        data[4] = (seq >> 8) & 0xFF  # High byte
+        data[5] = seq & 0xFF         # Low byte
     
         packet = Packet(
             packet_type=PACKET_TYPE_PIPE,
@@ -631,8 +631,8 @@ class CyncHub:
             0x05, ct
         ])
         # Embed the sequence number into bytes 1-2 of the data
-        data[1] = (seq >> 8) & 0xFF  # High byte
-        data[2] = seq & 0xFF         # Low byte
+        data[4] = (seq >> 8) & 0xFF  # High byte
+        data[5] = seq & 0xFF         # Low byte
     
         packet = Packet(
             packet_type=PACKET_TYPE_PIPE,
@@ -651,8 +651,8 @@ class CyncHub:
             0x04, r, g, b
         ])
         # Embed the sequence number into bytes 1-2 of the data
-        data[1] = (seq >> 8) & 0xFF  # High byte
-        data[2] = seq & 0xFF         # Low byte
+        data[4] = (seq >> 8) & 0xFF  # High byte
+        data[5] = seq & 0xFF         # Low byte
     
         packet = Packet(
             packet_type=PACKET_TYPE_PIPE,
