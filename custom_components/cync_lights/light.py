@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import Any, Tuple, List, Optional
 
 import logging
-import asyncio
 
 from homeassistant.components.light import (
     ATTR_BRIGHTNESS,
@@ -13,6 +12,7 @@ from homeassistant.components.light import (
     ATTR_COLOR_TEMP,
     ATTR_EFFECT,
     ATTR_FLASH,
+    ATTR_RGB_COLOR,
     ATTR_TRANSITION,
     ColorMode,
     LightEntity,
@@ -67,16 +67,16 @@ class CyncSwitchEntity(LightEntity):
 
         # Determine supported color modes based on capabilities
         supported_color_modes = set()
-        if self.cync_switch.support_rgb:
-                supported_color_modes.add(ColorMode.RGB)
-        if self.cync_switch.support_color_temp:
-                supported_color_modes.add(ColorMode.COLOR_TEMP)
-        # Only add BRIGHTNESS if neither RGB nor COLOR_TEMP is supported
-        if not (self.cync_switch.support_rgb or self.cync_switch.support_color_temp):
-            if self.cync_switch.support_brightness:
-                    supported_color_modes.add(ColorMode.BRIGHTNESS)
-        if not supported_color_modes:
-            supported_color_modes.add(ColorMode.ONOFF)
+        if self.cync_switch.support_rgb and self.cync_switch.support_color_temp:
+            supported_color_modes = {ColorMode.RGB, ColorMode.COLOR_TEMP}
+        elif self.cync_switch.support_rgb:
+            supported_color_modes = {ColorMode.RGB}
+        elif self.cync_switch.support_color_temp:
+            supported_color_modes = {ColorMode.COLOR_TEMP}
+        elif self.cync_switch.support_brightness:
+            supported_color_modes = {ColorMode.BRIGHTNESS}
+        else:
+            supported_color_modes = {ColorMode.ONOFF}
 
         self._attr_supported_color_modes = supported_color_modes
 
@@ -84,12 +84,18 @@ class CyncSwitchEntity(LightEntity):
         self._attr_effect_list = []
         if self.cync_switch.hub.effect_mapping:
             self._attr_effect_list = list(self.cync_switch.hub.effect_mapping.keys())
-            if self._attr_effect_list:
-                self._attr_supported_features |= LightEntityFeature.EFFECT
+            self._attr_supported_features |= LightEntityFeature.EFFECT
+
+        # Add flash support
+        self._attr_supported_features |= LightEntityFeature.FLASH
+
+        # Add transition support if brightness is supported
+        if self.cync_switch.support_brightness:
+            self._attr_supported_features |= LightEntityFeature.TRANSITION
 
     async def async_added_to_hass(self) -> None:
         """Run when this Entity has been added to HA."""
-        self.cync_switch.register(self.update_callback, self.hass)
+        self.cync_switch.register(self.async_write_ha_state, self.hass)
 
     async def async_will_remove_from_hass(self) -> None:
         """Entity being removed from hass."""
@@ -122,13 +128,34 @@ class CyncSwitchEntity(LightEntity):
 
     @property
     def brightness(self) -> int | None:
-        """Return the brightness of this switch."""
-        return self.cync_switch.brightness  # Assumed to be in 0-100 scale
+        """Return the brightness of this switch between 0..255."""
+        if self.cync_switch.brightness is not None:
+            return round(self.cync_switch.brightness * 255 / 100)
+        return None
+
+    @property
+    def color_temp(self) -> int | None:
+        """Return color temperature in mireds."""
+        if self.cync_switch.color_temp_kelvin is not None and self.cync_switch.color_temp_kelvin > 0:
+            try:
+                return int(1000000 / self.cync_switch.color_temp_kelvin)
+            except ZeroDivisionError:
+                _LOGGER.error("Color temperature Kelvin value is zero, cannot convert to mireds.")
+                return None
+        return None
 
     @property
     def color_temp_kelvin(self) -> int | None:
         """Return the color temperature of this light in Kelvin."""
         return self.cync_switch.color_temp_kelvin
+
+    @property
+    def rgb_color(self) -> Tuple[int, int, int] | None:
+        """Return the RGB color tuple of this light switch."""
+        rgb = self.cync_switch.rgb
+        if rgb and rgb.get('active'):
+            return (rgb['r'], rgb['g'], rgb['b'])
+        return None
 
     @property
     def supported_color_modes(self) -> set[ColorMode]:
@@ -149,21 +176,24 @@ class CyncSwitchEntity(LightEntity):
     @property
     def effect_list(self) -> list[str] | None:
         """Return the list of supported effects."""
-        return self._attr_effect_list if self._attr_effect_list else None
+        return self._attr_effect_list
 
     @property
     def effect(self) -> str | None:
         """Return the current effect."""
         return getattr(self.cync_switch, 'current_effect', None)
 
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        """Return the optional state attributes."""
+        return {"color_temp_kelvin": self.color_temp_kelvin}
+
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn on the light."""
         _LOGGER.debug("Turning on light: %s with kwargs: %s", self.name, kwargs)
         brightness = kwargs.get(ATTR_BRIGHTNESS)
         color_temp_kelvin = kwargs.get(ATTR_COLOR_TEMP_KELVIN)
-        effect = kwargs.get(ATTR_EFFECT)
-        flash = kwargs.get(ATTR_FLASH)
-        transition = kwargs.get(ATTR_TRANSITION)
+        rgb_color = kwargs.get(ATTR_RGB_COLOR)
 
         if not color_temp_kelvin and ATTR_COLOR_TEMP in kwargs:
             # Convert mireds to Kelvin
@@ -173,19 +203,19 @@ class CyncSwitchEntity(LightEntity):
                 _LOGGER.error("Invalid color_temp value: %s", e)
                 color_temp_kelvin = None
 
+        effect = kwargs.get(ATTR_EFFECT)
+        flash = kwargs.get(ATTR_FLASH)
+        transition = kwargs.get(ATTR_TRANSITION)
+
         # Handle effect "None" to stop any active effect
         if effect == "None":
             effect = None
 
-        # Handle brightness conversion here
-        brightness_percent = None
-        if brightness is not None:
-            brightness_percent = round(brightness * 100 / 255)  # Scale 0-255 to 0-100
-
         try:
             await self.cync_switch.turn_on(
-                brightness=brightness_percent,
+                brightness=brightness,
                 color_temp_kelvin=color_temp_kelvin,
+                rgb_color=rgb_color,
                 effect=effect,
                 flash=flash,
                 transition=transition,
@@ -202,9 +232,3 @@ class CyncSwitchEntity(LightEntity):
         except Exception as e:
             _LOGGER.error("Error turning off light %s: %s", self.name, e)
 
-    def update_callback(self):
-        """Callback to update the light's state."""
-        self._state = self.cync_switch.power_state
-        self._brightness = self.cync_switch.brightness
-        self._color_temp_kelvin = self.cync_switch.color_temp_kelvin
-        self.async_write_ha_state()

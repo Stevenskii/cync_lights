@@ -48,6 +48,121 @@ Capabilities = {
 }
 
 
+import logging
+import threading
+import asyncio
+import struct
+import aiohttp
+import math
+import ssl
+from typing import Any, Callable, Dict, List, Optional, Tuple
+
+_LOGGER = logging.getLogger(__name__)
+
+API_AUTH = "https://api.gelighting.com/v2/user_auth"
+API_REQUEST_CODE = "https://api.gelighting.com/v2/two_factor/email/verifycode"
+API_2FACTOR_AUTH = "https://api.gelighting.com/v2/user_auth/two_factor"
+API_DEVICES = "https://api.gelighting.com/v2/user/{user}/subscribe/devices"
+API_DEVICE_INFO = "https://api.gelighting.com/v2/product/{product_id}/device/{device_id}/property"
+
+Capabilities = {
+    "ONOFF": [1, 5, 6, 7, 8, 9, 10, 11, 13, 14, 15, 17, 18, 19, 20, 21, 22, 23, 24,
+              25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 48,
+              49, 51, 52, 53, 54, 55, 56, 57, 58, 59, 61, 62, 63, 64, 65, 66, 67,
+              68, 80, 81, 82, 83, 85, 128, 129, 130, 131, 132, 133, 134, 135, 136,
+              137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149,
+              150, 151, 152, 153, 154, 155, 156, 158, 159, 160, 161, 162, 163,
+              164, 165, 169, 170],
+    "BRIGHTNESS": [1, 5, 6, 7, 8, 9, 10, 11, 13, 14, 15, 17, 18, 19, 20, 21, 22,
+                   23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37,
+                   48, 49, 55, 56, 80, 81, 82, 83, 85, 128, 129, 130, 131, 132,
+                   133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144,
+                   145, 146, 147, 148, 149, 150, 151, 152, 153, 154, 155, 156,
+                   158, 159, 160, 161, 162, 163, 164, 165, 169, 170],
+    "COLORTEMP": [5, 6, 7, 8, 10, 11, 14, 15, 19, 20, 21, 22, 23, 25, 26, 28,
+                  29, 30, 31, 32, 33, 34, 35, 80, 82, 83, 85, 129, 130, 131, 132,
+                  133, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145,
+                  146, 147, 153, 154, 155, 156, 158, 159, 160, 161, 162, 163,
+                  164, 165, 169, 170],
+    "RGB": [6, 7, 8, 21, 22, 23, 30, 31, 32, 33, 34, 35, 131, 132, 133, 137,
+            138, 139, 140, 141, 142, 143, 146, 147, 153, 154, 155, 156, 158,
+            159, 160, 161, 162, 163, 164, 165, 169, 170],
+    "MOTION": [37, 49, 54],
+    "AMBIENT_LIGHT": [37, 49, 54],
+    "WIFICONTROL": [36, 37, 38, 39, 40, 48, 49, 51, 52, 53, 54, 55, 56, 57,
+                    58, 59, 61, 62, 63, 64, 65, 66, 67, 68, 80, 81, 128, 129,
+                    130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140,
+                    141, 142, 143, 144, 145, 146, 147, 148, 149, 150, 151,
+                    152, 153, 154, 155, 156, 158, 159, 160, 161, 162, 163,
+                    164, 165, 169, 170],
+    "PLUG": [64, 65, 66, 67, 68],
+    "FAN": [81],
+    "MULTIELEMENT": {'67': 2}
+}
+
+import logging
+import threading
+import asyncio
+import struct
+import aiohttp
+import math
+import ssl
+from typing import Any, Callable, Dict, List, Optional, Tuple
+
+_LOGGER = logging.getLogger(__name__)
+
+API_AUTH = "https://api.gelighting.com/v2/user_auth"
+API_REQUEST_CODE = "https://api.gelighting.com/v2/two_factor/email/verifycode"
+API_2FACTOR_AUTH = "https://api.gelighting.com/v2/user_auth/two_factor"
+API_DEVICES = "https://api.gelighting.com/v2/user/{user}/subscribe/devices"
+API_DEVICE_INFO = "https://api.gelighting.com/v2/product/{product_id}/device/{device_id}/property"
+
+Capabilities = {
+    "ONOFF": [1, 5, 6, 7, 8, 9, 10, 11, 13, 14, 15, 17, 18, 19, 20, 21, 22, 23, 24,
+              25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 48,
+              49, 51, 52, 53, 54, 55, 56, 57, 58, 59, 61, 62, 63, 64, 65, 66, 67,
+              68, 80, 81, 82, 83, 85, 128, 129, 130, 131, 132, 133, 134, 135, 136,
+              137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149,
+              150, 151, 152, 153, 154, 155, 156, 158, 159, 160, 161, 162, 163,
+              164, 165, 169, 170],
+    "BRIGHTNESS": [1, 5, 6, 7, 8, 9, 10, 11, 13, 14, 15, 17, 18, 19, 20, 21, 22,
+                   23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37,
+                   48, 49, 55, 56, 80, 81, 82, 83, 85, 128, 129, 130, 131, 132,
+                   133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144,
+                   145, 146, 147, 148, 149, 150, 151, 152, 153, 154, 155, 156,
+                   158, 159, 160, 161, 162, 163, 164, 165, 169, 170],
+    "COLORTEMP": [5, 6, 7, 8, 10, 11, 14, 15, 19, 20, 21, 22, 23, 25, 26, 28,
+                  29, 30, 31, 32, 33, 34, 35, 80, 82, 83, 85, 129, 130, 131, 132,
+                  133, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145,
+                  146, 147, 153, 154, 155, 156, 158, 159, 160, 161, 162, 163,
+                  164, 165, 169, 170],
+    "RGB": [6, 7, 8, 21, 22, 23, 30, 31, 32, 33, 34, 35, 131, 132, 133, 137,
+            138, 139, 140, 141, 142, 143, 146, 147, 153, 154, 155, 156, 158,
+            159, 160, 161, 162, 163, 164, 165, 169, 170],
+    "MOTION": [37, 49, 54],
+    "AMBIENT_LIGHT": [37, 49, 54],
+    "WIFICONTROL": [36, 37, 38, 39, 40, 48, 49, 51, 52, 53, 54, 55, 56, 57,
+                    58, 59, 61, 62, 63, 64, 65, 66, 67, 68, 80, 81, 128, 129,
+                    130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140,
+                    141, 142, 143, 144, 145, 146, 147, 148, 149, 150, 151,
+                    152, 153, 154, 155, 156, 158, 159, 160, 161, 162, 163,
+                    164, 165, 169, 170],
+    "PLUG": [64, 65, 66, 67, 68],
+    "FAN": [81],
+    "MULTIELEMENT": {'67': 2}
+}
+
+# Packet types and subtypes
+PACKET_TYPE_AUTH = 1
+PACKET_TYPE_PIPE = 7
+
+PIPE_SUBTYPE_SET_STATUS = 0xd0
+PIPE_SUBTYPE_SET_LUM = 0xd2
+PIPE_SUBTYPE_SET_CT = 0xe2
+PIPE_SUBTYPE_GET_STATUS = 0xdb
+PIPE_SUBTYPE_GET_STATUS_PAGINATED = 0x52
+
+
 class CyncHub:
 
     def __init__(self, user_data, options):
@@ -99,7 +214,7 @@ class CyncHub:
             for show in light_shows:
                 effect_name = show['name']
                 effect_index = show['index']
-                effect_mapping[effect_name] = show
+                effect_mapping[effect_name] = effect_index
         return effect_mapping
 
     def start_tcp_client(self):
@@ -116,7 +231,7 @@ class CyncHub:
         for home_controllers in self.home_controllers.values():
             for controller in home_controllers:
                 seq = self.get_seq_num()
-                state_request = self._create_set_status_packet(controller, seq, device_index=0, state=0)
+                state_request = self._create_get_status_packet(controller, seq)
                 self.loop.call_soon_threadsafe(self.send_request, state_request)
 
     async def _connect(self):
@@ -132,6 +247,8 @@ class CyncHub:
                         self.reader, self.writer = await asyncio.open_connection('cm.gelighting.com', 23779, ssl=context)
                     except Exception:
                         self.reader, self.writer = await asyncio.open_connection('cm.gelighting.com', 23778)
+                # Authenticate after connection
+                await self._authenticate()
             except Exception as e:
                 _LOGGER.error(f"{type(e).__name__}: {e}")
                 await asyncio.sleep(5)
@@ -158,53 +275,61 @@ class CyncHub:
                 except Exception as e:
                     _LOGGER.error(f"{type(e).__name__}: {e}")
 
-    async def _read_tcp_messages(self):
+    async def _authenticate(self):
+        """Authenticate with the server using the login_code."""
         self.writer.write(self.login_code)
         await self.writer.drain()
-        await self.reader.read(1000)
-        self.logged_in = True
+        # Read authentication response
+        response = await self.reader.read(1000)
+        if response:
+            self.logged_in = True
+            _LOGGER.debug("Successfully authenticated with the server")
+        else:
+            raise Exception("Authentication failed: no response from server")
+
+    async def _read_tcp_messages(self):
         while not self.shutting_down:
             data = await self.reader.read(1000)
             if len(data) == 0:
                 self.logged_in = False
                 raise LostConnection
-            while len(data) >= 12:
-                packet_type = int(data[0])
+            while len(data) >= 5:
+                packet_type = int(data[0]) >> 4
                 packet_length = struct.unpack(">I", data[1:5])[0]
+                if len(data) < packet_length + 5:
+                    # Wait for more data
+                    break
                 packet = data[5:packet_length + 5]
                 try:
                     if packet_length == len(packet):
-                        if packet_type == 115:
+                        if packet_type == PACKET_TYPE_PIPE:
                             switch_id = str(struct.unpack(">I", packet[0:4])[0])
+                            seq = struct.unpack(">H", packet[4:6])[0]
                             home_id = self.switchID_to_homeID[switch_id]
-
-                            # Send response packet
-                            response_id = struct.unpack(">H", packet[4:6])[0]
-                            response_packet = self._create_response_packet(switch_id, response_id)
-                            self.loop.call_soon_threadsafe(self.send_request, response_packet)
-
-                            if packet_length >= 25 and int(packet[13]) == 84:
-                                # Parse motion and ambient light sensor packet
-                                deviceID = self.home_devices[home_id][int(packet[16])]
-                                motion = int(packet[22]) > 0
-                                ambient_light = int(packet[24]) > 0
-                                if deviceID in self.cync_motion_sensors:
-                                    self.cync_motion_sensors[deviceID].update_motion_sensor(motion)
-                                if deviceID in self.cync_ambient_light_sensors:
-                                    self.cync_ambient_light_sensors[deviceID].update_ambient_light_sensor(ambient_light)
-                            elif packet_length > 15 and int(packet[13]) == 0x52:
-                                # Handle Get Status Paginated Response
-                                # Implementation depends on further details
-                                pass
-                        elif packet_type == 171:
-                            switch_id = str(struct.unpack(">I", packet[0:4])[0])
-                            home_id = self.switchID_to_homeID[switch_id]
-                            self._add_connected_devices(switch_id, home_id)
-                        elif packet_type == 123:
-                            seq = str(struct.unpack(">H", packet[4:6])[0])
-                            command_received = self.pending_commands.get(seq, None)
-                            if command_received is not None:
-                                command_received(seq)
+                            subtype = packet[11]
+                            if subtype == PIPE_SUBTYPE_GET_STATUS_PAGINATED:
+                                # Parse initial state packet
+                                self._add_connected_devices(switch_id, home_id)
+                                payload = packet[12:]
+                                while len(payload) >= 19:
+                                    device_index = payload[3]
+                                    deviceID = self.home_devices[home_id][device_index]
+                                    if deviceID in self.cync_switches:
+                                        state = payload[4] > 0
+                                        brightness = payload[5] if state else 0
+                                        color_temp = payload[6]
+                                        rgb = {'r': payload[7], 'g': payload[8], 'b': payload[9], 'active': payload[6] == 254}
+                                        self.cync_switches[deviceID].update_switch(state, brightness, color_temp, rgb)
+                                    payload = payload[19:]
+                            elif subtype == PIPE_SUBTYPE_SET_STATUS:
+                                # Acknowledge for set status command
+                                seq_str = str(seq)
+                                command_received = self.pending_commands.get(seq_str, None)
+                                if command_received is not None:
+                                    command_received(seq_str)
+                        elif packet_type == 115:
+                            # Handle other packet types if necessary
+                            pass
                 except Exception as e:
                     _LOGGER.error(f"{type(e).__name__}: {e}")
                 data = data[packet_length + 5:]
@@ -239,7 +364,7 @@ class CyncHub:
                 for home_id, home_controllers in self.home_controllers.items():
                     for controller in home_controllers:
                         seq = self.get_seq_num()
-                        ping = self._create_ping_packet(controller, seq)
+                        ping = bytes.fromhex('a300000007') + int(controller).to_bytes(4, 'big') + seq.to_bytes(2, 'big') + bytes.fromhex('00')
                         self.loop.call_soon_threadsafe(self.send_request, ping)
                         await asyncio.sleep(0.15)
                 await asyncio.sleep(2)
@@ -259,9 +384,9 @@ class CyncHub:
             if connected_devices:
                 controller = self.cync_switches[connected_devices[0]].switch_id
                 seq = self.get_seq_num()
-                state_request = self._create_set_status_packet(controller, seq, device_index=0, state=1)
+                state_request = self._create_get_status_packet(controller, seq)
                 self.loop.call_soon_threadsafe(self.send_request, state_request)
-        while any(self.cync_switches[dev_id]._update_callback is None for dev_id in self.options["switches"]) and any(self.cync_rooms[dev_id]._update_callback is None for dev_id in self.options["rooms"]):
+        while any(self.cync_switches[dev_id]._update_callback is None for dev_id in self.options.get("switches", [])) and any(self.cync_rooms[dev_id]._update_callback is None for dev_id in self.options.get("rooms", [])):
             await asyncio.sleep(2)
         for dev in self.cync_switches.values():
             dev.publish_update()
@@ -269,73 +394,10 @@ class CyncHub:
             room.publish_update()
 
     def send_request(self, request):
-        async def send(self, request):
-            """Send a request to the Cync server."""
-            try:
-                self.writer.write(request)
-                await self.writer.drain()
-            except ConnectionResetError as e:
-                _LOGGER.error("Connection reset, retrying: %s", e)
-                await self._reconnect()  # Call reconnect logic
-            except Exception as e:
-                _LOGGER.error("Unexpected error during send: %s", e)
-                raise
-    async def _reconnect(self):
-        """Reconnect to the Cync server if the connection is lost."""
-        _LOGGER.debug("Attempting to reconnect...")
-        await self._connect()
-
-
-    def _create_set_status_packet(self, switch_id, seq, device_index, state):
-        """Create a Set Device Status packet."""
-        data_payload = struct.pack(">IHBBBB", device_index, 0, 0xd0, 0, 0, state)
-        packet = self._build_pipe_packet(int(switch_id), seq, 0xd0, data_payload)
-        return packet
-    
-    
-    def _create_set_brightness_packet(self, switch_id, seq, device_index, brightness):
-        """Create a Set Brightness packet."""
-        data_payload = struct.pack(">IHBBBB", device_index, 0, 0xd2, 0, 0, brightness)
-        packet = self._build_pipe_packet(int(switch_id), seq, 0xd2, data_payload)
-        return packet
-    
-    
-    def _create_set_color_tone_packet(self, switch_id, seq, device_index, color_tone):
-        """Create a Set Color Tone packet."""
-        data_payload = struct.pack(">IHBBBB", device_index, 0, 0xe2, 0, 0x05, color_tone)
-        packet = self._build_pipe_packet(int(switch_id), seq, 0xe2, data_payload)
-        return packet
-    
-    
-    def _create_set_rgb_packet(self, switch_id, seq, device_index, r, g, b):
-        """Create a Set RGB packet."""
-        data_payload = struct.pack(">IHBBB", device_index, 0, 0xe2, r, g, b)
-        packet = self._build_pipe_packet(int(switch_id), seq, 0xe2, data_payload)
-        return packet
-    
-    def _create_response_packet(self, switch_id, response_id):
-        """Create a response packet to acknowledge receipt."""
-        data_payload = struct.pack(">H", response_id)
-        packet = self._build_pipe_packet(int(switch_id), response_id, 0xA0, data_payload)
-        return packet
-        
-    def _create_ping_packet(self, switch_id, seq):
-        """Create a Ping packet to maintain connection."""
-        data_payload = struct.pack(">IH", seq, 0)
-        packet = self._build_pipe_packet(int(switch_id), seq, 0xFF, data_payload)
-        return packet
-
-    def _build_pipe_packet(self, device_id, seq, subtype, data):
-        """Build a generic pipe packet."""
-        packet = bytearray()
-        packet.append(0x73)  # Start Byte
-        packet += struct.pack(">I", len(data) + 2)  # Header with length
-        packet.append(subtype)  # Command Subtype
-        packet += data  # Data Payload
-        checksum = sum(packet) % 256
-        packet.append(checksum)  # Checksum Byte
-        packet.append(0x7E)  # End Byte
-        return bytes(packet)
+        async def send():
+            self.writer.write(request)
+            await self.writer.drain()
+        self.loop.create_task(send())
 
     def get_seq_num(self):
         if self._seq_num == 65535:
@@ -344,6 +406,112 @@ class CyncHub:
             self._seq_num += 1
         return self._seq_num
 
+    # Packet management methods
+    def _build_packet(self, packet_type: int, is_response: bool, data: bytes) -> bytes:
+        """Build the packet with header and data."""
+        type_byte = (packet_type << 4) | 3  # Base type byte
+        if is_response:
+            type_byte |= 8  # Set response bit
+        length = len(data)
+        header = struct.pack('>BI', type_byte, length)
+        return header + data
+
+    def _build_pipe_packet(self, device_id: int, seq: int, subtype: int, data_payload: bytes) -> bytes:
+        """Build a 'pipe buffer' packet with the given subtype and payload."""
+        buf = bytearray()
+        buf += struct.pack('>I', device_id)          # Device ID (4 bytes, big-endian)
+        buf += struct.pack('>H', seq)                # Sequence number (2 bytes, big-endian)
+        buf += bytes([0])                            # Unknown byte (1 byte)
+        buf += struct.pack('>H', 0x7e00)             # Constant (0x7e00)
+        buf += bytes([0, 0, 0, 0xf8])                # Constant bytes (4 bytes)
+        buf += bytes([subtype])                      # Subtype (1 byte)
+        data_length = len(data_payload)
+        buf += bytes([data_length])                  # Data payload length (1 byte)
+        buf += data_payload                          # Data payload
+        buf += bytes([0, 0, 0])                      # Padding or additional data (3 bytes)
+        packet_data = buf
+        packet = self._build_packet(PACKET_TYPE_PIPE, False, packet_data)
+        return packet
+
+    def _create_set_status_packet(self, switch_id: int, seq: int, device_index: int, state: int) -> bytes:
+        """Create a Set Device Status packet."""
+        data_payload = bytearray()
+        data_payload += bytes([0, 0, 0, 0, 0])  # Unknown bytes (5 bytes)
+        data_payload += struct.pack('>H', device_index)  # Device index (2 bytes, big-endian)
+        data_payload += bytes([0, PIPE_SUBTYPE_SET_STATUS])  # Command, repeated (2 bytes)
+        data_payload += bytes([0, 0])  # Unknown bytes (2 bytes)
+        data_payload += bytes([state])  # Status (1 byte)
+        data_payload += bytes([0])      # Padding or additional data (1 byte)
+        packet = self._build_pipe_packet(int(switch_id), seq, PIPE_SUBTYPE_SET_STATUS, data_payload)
+        return packet
+
+    def _create_set_brightness_packet(self, switch_id: int, seq: int, device_index: int, brightness: int) -> bytes:
+        """Create a Set Brightness packet."""
+        brightness = max(1, min(100, brightness))
+        data_payload = bytearray()
+        data_payload += bytes([0, 0, 0, 0, 0])  # Unknown bytes (5 bytes)
+        data_payload += struct.pack('>H', device_index)  # Device index (2 bytes, big-endian)
+        data_payload += bytes([0, PIPE_SUBTYPE_SET_LUM])  # Command, repeated (2 bytes)
+        data_payload += bytes([0, 0])  # Unknown bytes (2 bytes)
+        data_payload += bytes([brightness])  # Brightness (1 byte)
+        packet = self._build_pipe_packet(int(switch_id), seq, PIPE_SUBTYPE_SET_LUM, data_payload)
+        return packet
+
+    def _create_set_color_temp_packet(self, switch_id: int, seq: int, device_index: int, color_temp: int) -> bytes:
+        """Create a Set Color Temperature packet."""
+        color_temp = max(0, min(100, color_temp))
+        data_payload = bytearray()
+        data_payload += bytes([0, 0, 0, 0, 0])  # Unknown bytes (5 bytes)
+        data_payload += struct.pack('>H', device_index)  # Device index (2 bytes, big-endian)
+        data_payload += bytes([0, PIPE_SUBTYPE_SET_CT])  # Command, repeated (2 bytes)
+        data_payload += bytes([0, 0])  # Unknown bytes (2 bytes)
+        data_payload += bytes([0x05, color_temp])  # Command parameters (2 bytes)
+        packet = self._build_pipe_packet(int(switch_id), seq, PIPE_SUBTYPE_SET_CT, data_payload)
+        return packet
+
+    def _create_set_rgb_packet(self, switch_id: int, seq: int, device_index: int, r: int, g: int, b: int) -> bytes:
+        """Create a Set RGB packet."""
+        data_payload = bytearray()
+        data_payload += bytes([0, 0, 0, 0, 0])  # Unknown bytes (5 bytes)
+        data_payload += struct.pack('>H', device_index)  # Device index (2 bytes, big-endian)
+        data_payload += bytes([0, PIPE_SUBTYPE_SET_CT])  # Command, repeated (2 bytes)
+        data_payload += bytes([0, 0])  # Unknown bytes (2 bytes)
+        data_payload += bytes([0x04, r, g, b])  # Command parameters (4 bytes)
+        packet = self._build_pipe_packet(int(switch_id), seq, PIPE_SUBTYPE_SET_CT, data_payload)
+        return packet
+
+    def _create_get_status_packet(self, switch_id: int, seq: int) -> bytes:
+        """Create a Get Status Paginated packet."""
+        data_payload = bytes([0x00, 0x00, 0x00, 0xff, 0xff, 0x00])
+        packet = self._build_pipe_packet(int(switch_id), seq, PIPE_SUBTYPE_GET_STATUS_PAGINATED, data_payload)
+        return packet
+
+    # Implement methods to send commands using the above packet creation methods
+    def turn_on(self, switch_id, mesh_id, seq):
+        """Send command to turn on the light."""
+        packet = self._create_set_status_packet(switch_id, seq, int.from_bytes(mesh_id, 'big'), 1)
+        self.loop.call_soon_threadsafe(self.send_request, packet)
+
+    def turn_off(self, switch_id, mesh_id, seq):
+        """Send command to turn off the light."""
+        packet = self._create_set_status_packet(switch_id, seq, int.from_bytes(mesh_id, 'big'), 0)
+        self.loop.call_soon_threadsafe(self.send_request, packet)
+
+    def set_brightness(self, brightness, switch_id, mesh_id, seq):
+        """Send command to set brightness."""
+        packet = self._create_set_brightness_packet(switch_id, seq, int.from_bytes(mesh_id, 'big'), brightness)
+        self.loop.call_soon_threadsafe(self.send_request, packet)
+
+    def set_color_temp(self, color_temp, switch_id, mesh_id, seq):
+        """Send command to set color temperature."""
+        packet = self._create_set_color_temp_packet(switch_id, seq, int.from_bytes(mesh_id, 'big'), color_temp)
+        self.loop.call_soon_threadsafe(self.send_request, packet)
+
+    def set_rgb(self, rgb_values, switch_id, mesh_id, seq):
+        """Send command to set RGB color."""
+        r, g, b = rgb_values
+        packet = self._create_set_rgb_packet(switch_id, seq, int.from_bytes(mesh_id, 'big'), r, g, b)
+        self.loop.call_soon_threadsafe(self.send_request, packet)
 
 class CyncRoom:
 
@@ -365,29 +533,41 @@ class CyncRoom:
         self.is_subgroup = room_info.get('isSubgroup', False)
         self.all_room_switches = self.switches.copy()
         self.controllers: List[str] = []
-        self.default_controller = room_info.get(
-            'room_controller',
-            self.hub.home_controllers[self.home_id][0]
-        )
+        self.default_controller = room_info.get('room_controller', self.hub.home_controllers[self.home_id][0])
         self._update_callback: Optional[Callable[[], None]] = None
         self._update_parent_room: Optional[Callable[[], None]] = None
-        self.support_brightness = room_info.get('BRIGHTNESS', False)
-        self.support_color_temp = room_info.get('COLORTEMP', False)
-        self.support_rgb = room_info.get('RGB', False)
-        self.groups_support_brightness: List[str] = []
-        self.groups_support_color_temp: List[str] = []
-        self.groups_support_rgb: List[str] = []
+        self.support_brightness = False
+        self.support_color_temp = False
+        self.support_rgb = False
+        self.switches_support_brightness = []
+        self.switches_support_color_temp = []
+        self.switches_support_rgb = []
+        self.groups_support_brightness = []
+        self.groups_support_color_temp = []
+        self.groups_support_rgb = []
         self._command_timeout = 0.5
         self._command_retry_time = 5
 
     def initialize(self):
         """Initialization of supported features and registration of update function for all switches and subgroups in the room"""
-        self.switches_support_brightness = [device_id for device_id in self.switches if self.hub.cync_switches[device_id].support_brightness]
-        self.switches_support_color_temp = [device_id for device_id in self.switches if self.hub.cync_switches[device_id].support_color_temp]
-        self.switches_support_rgb = [device_id for device_id in self.switches if self.hub.cync_switches[device_id].support_rgb]
-        self.groups_support_brightness = [room_id for room_id in self.subgroups if self.hub.cync_rooms[room_id].support_brightness]
-        self.groups_support_color_temp = [room_id for room_id in self.subgroups if self.hub.cync_rooms[room_id].support_color_temp]
-        self.groups_support_rgb = [room_id for room_id in self.subgroups if self.hub.cync_rooms[room_id].support_rgb]
+        self.switches_support_brightness = [
+            device_id for device_id in self.switches if self.hub.cync_switches[device_id].support_brightness
+        ]
+        self.switches_support_color_temp = [
+            device_id for device_id in self.switches if self.hub.cync_switches[device_id].support_color_temp
+        ]
+        self.switches_support_rgb = [
+            device_id for device_id in self.switches if self.hub.cync_switches[device_id].support_rgb
+        ]
+        self.groups_support_brightness = [
+            room_id for room_id in self.subgroups if self.hub.cync_rooms[room_id].support_brightness
+        ]
+        self.groups_support_color_temp = [
+            room_id for room_id in self.subgroups if self.hub.cync_rooms[room_id].support_color_temp
+        ]
+        self.groups_support_rgb = [
+            room_id for room_id in self.subgroups if self.hub.cync_rooms[room_id].support_rgb
+        ]
         self.support_brightness = (len(self.switches_support_brightness) + len(self.groups_support_brightness)) > 0
         self.support_color_temp = (len(self.switches_support_color_temp) + len(self.groups_support_color_temp)) > 0
         self.support_rgb = (len(self.switches_support_rgb) + len(self.groups_support_rgb)) > 0
@@ -431,7 +611,7 @@ class CyncRoom:
         attempts = 0
         update_received = False
         while not update_received and attempts < int(self._command_retry_time / self._command_timeout):
-            seq = self.hub.get_seq_num()
+            seq = str(self.hub.get_seq_num())
             controller = self.controllers[attempts % len(self.controllers)] if self.controllers else self.default_controller
 
             # Handle brightness
@@ -473,10 +653,7 @@ class CyncRoom:
             else:
                 update_received = True
 
-    async def turn_off(
-        self,
-        **kwargs: Any
-    ) -> None:
+    async def turn_off(self, **kwargs: Any) -> None:
         """Turn off the light."""
         attempts = 0
         update_received = False
@@ -566,10 +743,6 @@ class CyncRoom:
             if self._update_parent_room:
                 self._hass.add_job(self._update_parent_room)
 
-    def publish_update(self):
-        if self._update_callback:
-            self._hass.add_job(self._update_callback)
-
     def update_controllers(self):
         """Update the list of responsive, Wi-Fi connected controller devices"""
         connected_devices = self.hub.connected_devices[self.home_id]
@@ -583,10 +756,13 @@ class CyncRoom:
         ]
         self.controllers = controllers + others_available if connected_devices else [self.default_controller]
 
+    def publish_update(self):
+        if self._update_callback:
+            self._update_callback()
 
 class CyncSwitch:
 
-    def __init__(self, device_id, switch_info, room, hub):
+    def __init__(self, device_id, switch_info, room, hub) -> None:
         self.hub = hub
         self.device_id = device_id
         self.switch_id = switch_info.get('switch_id', '0')
@@ -664,7 +840,7 @@ class CyncSwitch:
             color_temp = 50  # Default mid value
 
         while not update_received and attempts < int(self._command_retry_time / self._command_timeout):
-            seq = self.hub.get_seq_num()
+            seq = str(self.hub.get_seq_num())
             controller = self.controllers[attempts % len(self.controllers)] if self.controllers else self.default_controller
 
             # Send Set Status (On)
@@ -688,10 +864,7 @@ class CyncSwitch:
             else:
                 update_received = True
 
-    async def turn_off(
-        self,
-        **kwargs: Any
-    ) -> None:
+    async def turn_off(self, **kwargs: Any) -> None:
         """Turn off the light."""
         attempts = 0
         update_received = False
@@ -739,14 +912,12 @@ class CyncSwitch:
 
         if previous_state != new_state:
             self.power_state = state
-            self.brightness = brightness
+            self.brightness = brightness if self.support_brightness and state else 100 if state else 0
             self.color_temp_kelvin = color_temp if color_temp is not None else self.color_temp_kelvin
             self.rgb = rgb if rgb is not None else self.rgb
             self.publish_update()
-            if self._update_callback:
-                self._hass.add_job(self._update_callback)
             if self._update_parent_room:
-                self._hass.add_job(self._update_parent_room)
+                self._update_parent_room()
 
     def update_controllers(self):
         """Update the list of responsive, Wi-Fi connected controller devices"""
@@ -758,21 +929,27 @@ class CyncSwitch:
             if self.room:
                 controllers.extend(
                     self.hub.cync_switches[device_id].switch_id
-                    for device_id in self.room.all_room_switches
-                    if device_id in connected_devices and device_id != self.device_id
+                    for device_id in self.room.all_room_switches if device_id in connected_devices and device_id != self.device_id
                 )
             others_available = [
                 self.hub.cync_switches[device_id].switch_id
                 for device_id in connected_devices
                 if self.hub.cync_switches[device_id].switch_id not in controllers
             ]
-            self.controllers = controllers + others_available
+            # Remove duplicates while preserving order
+            unique_others = []
+            seen = set()
+            for ctrl in others_available:
+                if ctrl not in seen:
+                    unique_others.append(ctrl)
+                    seen.add(ctrl)
+            self.controllers = controllers + unique_others
         else:
             self.controllers = [self.default_controller]
 
     def publish_update(self):
         if self._update_callback:
-            self._hass.add_job(self._update_callback)
+            self._update_callback()
 
 
 class CyncMotionSensor:
