@@ -51,17 +51,6 @@ Capabilities = {
     "FAN": [81],
     "MULTIELEMENT": {'67': 2}
 }
-# cync_hub.py
-
-import asyncio
-import struct
-import logging
-import threading
-import time
-import ssl
-from typing import Callable, Dict, Optional, List, Tuple, Any
-
-_LOGGER = logging.getLogger(__name__)
 
 # Define custom exceptions
 class UnreachableError(Exception):
@@ -69,6 +58,15 @@ class UnreachableError(Exception):
 
 class RemoteCallError(Exception):
     pass
+
+class LostConnection(Exception):
+    """Lost connection to Cync Server"""
+
+class ShuttingDown(Exception):
+    """Cync client shutting down"""
+
+class InvalidCyncConfiguration(Exception):
+    """Cync configuration is not supported"""
 
 # Packet types
 PACKET_TYPE_AUTH = 1
@@ -150,7 +148,7 @@ class CyncHub:
         self.hass = hass
         self.host = data.get("host", DEFAULT_HOST)
         self.port = data.get("port", DEFAULT_PORT)
-        self.login_code = data.get("login_code", b'')
+        self.login_code = bytes(data.get("login_code", b''))
         self.use_ssl = options.get("use_ssl", True)
 
         # Initialize device attributes
@@ -198,8 +196,9 @@ class CyncHub:
         [room.initialize() for room in self.cync_rooms.values() if room.is_subgroup]
         [room.initialize() for room in self.cync_rooms.values() if not room.is_subgroup]
     
-        self.loop = asyncio.get_event_loop()
-        
+        # Schedule the connect method
+        self.hass.loop.create_task(self.connect())
+
     def get_seq_num(self):
         """Thread-safe method to get the next sequence number."""
         with self.seq_lock:
@@ -207,7 +206,6 @@ class CyncHub:
             if self.seq_num > 65535:
                 self.seq_num = 1  # Reset if exceeds max value
             return self.seq_num
-        
 
     def _parse_light_shows(self, cync_config):
         """Parse lightShows data from cync_config and create a mapping."""
@@ -233,29 +231,11 @@ class CyncHub:
             self.ssl_context = None
             _LOGGER.debug("SSL is disabled for CyncHub.")
 
-
-    def start_client(self):
-        """
-        Start the asyncio event loop for the TCP client.
-        """
-        try:
-            self.loop.run_until_complete(self.connect())
-            self.loop.run_until_complete(self.read_tcp_messages())
-        except ShuttingDown:
-            _LOGGER.info("CyncHub is shutting down.")
-        except Exception as e:
-            _LOGGER.error(f"CyncHub encountered an exception: {e}")
-            _LOGGER.debug("Traceback:", exc_info=True)
-        finally:
-            if self.writer:
-                self.writer.close()
-                self.loop.run_until_complete(self.writer.wait_closed())
-            self.loop.stop()
-
     async def connect(self):
         """
         Establish TCP connection and authenticate, with retries and task management.
         """
+        _LOGGER.debug("CyncHub connect() method called.")
         while not self.shutting_down:
             try:
                 await self.setup_ssl_context()  # Setup SSL context asynchronously
@@ -266,8 +246,9 @@ class CyncHub:
                     self.reader, self.writer = await asyncio.open_connection(self.host, self.port, ssl=self.ssl_context)
                 except Exception:
                     _LOGGER.warning("SSL connection failed. Retrying with SSL context check disabled.")
-                    self.ssl_context.check_hostname = False
-                    self.ssl_context.verify_mode = ssl.CERT_NONE
+                    if self.ssl_context:
+                        self.ssl_context.check_hostname = False
+                        self.ssl_context.verify_mode = ssl.CERT_NONE
                     try:
                         self.reader, self.writer = await asyncio.open_connection(self.host, self.port, ssl=self.ssl_context)
                     except Exception:
@@ -299,44 +280,15 @@ class CyncHub:
     
                 # Create tasks for handling TCP messages and other maintenance tasks
                 read_tcp_messages = asyncio.create_task(self.read_tcp_messages(), name="Read TCP Messages")
-                maintain_connection = asyncio.create_task(self._maintain_connection(), name="Maintain Connection")
-                update_state = asyncio.create_task(self._update_state(), name="Update State")
-                update_connected_devices = asyncio.create_task(self._update_connected_devices(), name="Update Connected Devices")
+                # Additional tasks can be added here if needed
     
-                read_write_tasks = [read_tcp_messages, maintain_connection, update_state, update_connected_devices]
+                # Wait for the read_tcp_messages task to complete
+                await read_tcp_messages
     
-                # Wait for any task to raise an exception or shutdown the client
-                done, pending = await asyncio.wait(read_write_tasks, return_when=asyncio.FIRST_EXCEPTION)
-    
-                # Handle task results or exceptions
-                for task in done:
-                    try:
-                        result = task.result()
-                    except Exception as e:
-                        _LOGGER.error(f"{type(e).__name__}: {e}")
-    
-                # Cancel remaining tasks if needed
-                for task in pending:
-                    task.cancel()
-    
-                if not self.shutting_down:
-                    _LOGGER.error("Connection to Cync server reset, restarting in 15 seconds.")
-                    await asyncio.sleep(15)
-                else:
-                    _LOGGER.debug("Cync client shutting down.")
-            
             except Exception as e:
-                _LOGGER.error(f"{type(e).__name__}: {e}")
+                _LOGGER.error(f"Exception in connect(): {type(e).__name__}: {e}")
+                _LOGGER.debug("Traceback:", exc_info=True)
                 await asyncio.sleep(5)  # Retry connection after a delay if an error occurs
-
-    def _create_ssl_context(self):
-        """Create SSL context outside of the event loop."""
-        if self.use_ssl:
-            self.ssl_context = ssl.create_default_context()
-            _LOGGER.debug("SSL is enabled for CyncHub.")
-        else:
-            self.ssl_context = None
-            _LOGGER.debug("SSL is disabled for CyncHub.")
 
     async def read_tcp_messages(self):
         """
@@ -376,7 +328,7 @@ class CyncHub:
                     _LOGGER.debug(f"Packet Content: {packet_data.hex()}")
 
                     # Handle the packet
-                    asyncio.create_task(self.handle_packet(packet_type, is_response, packet_data))
+                    await self.handle_packet(packet_type, is_response, packet_data)
 
             except LostConnection:
                 _LOGGER.error("Lost connection to Cync server.")
@@ -521,16 +473,6 @@ class CyncHub:
                               f"Brightness: {response.brightness}, CT: {response.ct}, RGB: {response.rgb}")
                 # Update device states in Home Assistant accordingly
                 # This requires integration with Home Assistant's state management
-                # Example (pseudo-code):
-                # self.hass.states.set(
-                #     f"light.device_{response.device}",
-                #     {
-                #         "state": "on" if response.is_on else "off",
-                #         "brightness": response.brightness,
-                #         "color_temp": response.ct,
-                #         "rgb_color": response.rgb if response.use_rgb else None
-                #     }
-                # )
         else:
             _LOGGER.debug("Received Get Status Paginated request packet.")
             # Implement Get Status Paginated request handling if necessary
@@ -604,7 +546,7 @@ class CyncHub:
                 self.seq_num = 1  # Reset if exceeds max value
             return self.seq_num
 
-    def send_request(self, packet: Packet, callback: Optional[Callable[[str], None]] = None):
+    async def send_request(self, packet: Packet, callback: Optional[Callable[[str], None]] = None):
         """
         Send a request packet to the server with an optional callback for acknowledgment.
         """
@@ -615,7 +557,7 @@ class CyncHub:
         encoded_packet = packet.encode()
         try:
             self.writer.write(encoded_packet)
-            asyncio.run_coroutine_threadsafe(self.writer.drain(), self.loop)
+            await self.writer.drain()
             _LOGGER.debug(f"Sent packet: {encoded_packet.hex()}")
 
             if callback:
@@ -736,7 +678,7 @@ class CyncHub:
         return packet
 
     # Command sending methods
-    def set_device_status(
+    async def set_device_status(
         self,
         device_id: int,
         device_index: int,
@@ -748,9 +690,9 @@ class CyncHub:
         """
         seq_num = self.get_next_seq_num()
         packet = self.create_set_status_packet(device_id, seq_num, device_index, status)
-        self.send_request(packet, callback)
+        await self.send_request(packet, callback)
 
-    def set_device_lum(
+    async def set_device_lum(
         self,
         device_id: int,
         device_index: int,
@@ -762,9 +704,9 @@ class CyncHub:
         """
         seq_num = self.get_next_seq_num()
         packet = self.create_set_lum_packet(device_id, seq_num, device_index, brightness)
-        self.send_request(packet, callback)
+        await self.send_request(packet, callback)
 
-    def set_device_ct(
+    async def set_device_ct(
         self,
         device_id: int,
         device_index: int,
@@ -776,9 +718,9 @@ class CyncHub:
         """
         seq_num = self.get_next_seq_num()
         packet = self.create_set_ct_packet(device_id, seq_num, device_index, ct)
-        self.send_request(packet, callback)
+        await self.send_request(packet, callback)
 
-    def set_device_rgb(
+    async def set_device_rgb(
         self,
         device_id: int,
         device_index: int,
@@ -792,9 +734,9 @@ class CyncHub:
         """
         seq_num = self.get_next_seq_num()
         packet = self.create_set_rgb_packet(device_id, seq_num, device_index, r, g, b)
-        self.send_request(packet, callback)
+        await self.send_request(packet, callback)
 
-    def get_device_status_paginated(
+    async def get_device_status_paginated(
         self,
         device_id: int,
         callback: Optional[Callable[[str], None]] = None
@@ -804,9 +746,7 @@ class CyncHub:
         """
         seq_num = self.get_next_seq_num()
         packet = self.create_get_status_paginated_packet(device_id, seq_num)
-        self.send_request(packet, callback)
-
-    # Additional methods for handling sequence numbers, callbacks, etc., can be added here.
+        await self.send_request(packet, callback)
 
     # Shutdown method to gracefully close the connection
     def shutdown(self):
@@ -815,10 +755,14 @@ class CyncHub:
         """
         self.shutting_down = True
         if self.writer:
-            self.writer.close()
-            asyncio.run_coroutine_threadsafe(self.writer.wait_closed(), self.loop)
-        self.loop.call_soon_threadsafe(self.loop.stop)
-        self.client_thread.join()
+            self.hass.loop.create_task(self._close_writer())
+
+    async def _close_writer(self):
+        """
+        Close the writer asynchronously.
+        """
+        self.writer.close()
+        await self.writer.wait_closed()
         _LOGGER.info("CyncHub has been shut down.")
 
 class CyncRoom:
@@ -940,17 +884,17 @@ class CyncRoom:
                 color_temp = 50  # Default mid value
 
             # Send Set Status (On)
-            status_packet = self.hub.create_set_status_packet(controller, seq, device_index=0, state=1)
-            self.hub.send_request(status_packet)
+            status_packet = self.hub.create_set_status_packet(controller, seq, device_index=0, status=1)
+            await self.hub.send_request(status_packet)
 
             # Send Set Brightness
             brightness_packet = self.hub.create_set_lum_packet(controller, seq, device_index=0, brightness=brightness_value)
-            self.hub.send_request(brightness_packet)
+            await self.hub.send_request(brightness_packet)
 
             # Send Set Color Temperature
             if self.support_color_temp:
                 color_temp_packet = self.hub.create_set_ct_packet(controller, seq, device_index=0, color_temp=color_temp)
-                self.hub.send_request(color_temp_packet)
+                await self.hub.send_request(color_temp_packet)
 
             self.hub.pending_commands[seq] = self.command_received
             await asyncio.sleep(self._command_timeout)
@@ -970,7 +914,7 @@ class CyncRoom:
 
             # Send Set Status (Off)
             status_packet = self.hub.create_set_status_packet(controller, seq, device_index=0, state=0)
-            self.hub.send_request(status_packet)
+            await self.hub.send_request(status_packet)
 
             self.hub.pending_commands[seq] = self.command_received
             await asyncio.sleep(self._command_timeout)
@@ -1197,22 +1141,22 @@ class CyncSwitch:
 
             # Send Set Status (On)
             status_packet = self.hub.create_set_status_packet(controller, seq, self.mesh_id_int, 1)
-            self.hub.send_request(status_packet)
+            await self.hub.send_request(status_packet)
 
             # Send Set Brightness
             if self.support_brightness:
                 brightness_packet = self.hub.create_set_lum_packet(controller, seq, self.mesh_id_int, brightness_value)
-                self.hub.send_request(brightness_packet)
+                await self.hub.send_request(brightness_packet)
 
             # Send Set Color Temperature
             if self.support_color_temp and color_temp is not None:
                 color_temp_packet = self.hub.create_set_ct_packet(controller, seq, self.mesh_id_int, color_temp)
-                self.hub.send_request(color_temp_packet)
+                await self.hub.send_request(color_temp_packet)
 
             # Send Set RGB
             if self.support_rgb and rgb_color is not None:
                 rgb_packet = self.hub.create_set_rgb_packet(controller, seq, self.mesh_id_int, r, g, b)
-                self.hub.send_request(rgb_packet)
+                await self.hub.send_request(rgb_packet)
 
             # Implement effect and transition commands here if applicable
 
@@ -1234,7 +1178,7 @@ class CyncSwitch:
 
             # Send Set Status (Off)
             status_packet = self.hub.create_set_status_packet(controller, seq, self.mesh_id_int, 0)
-            self.hub.send_request(status_packet)
+            await self.hub.send_request(status_packet)
 
             self.hub.pending_commands[seq] = self.command_received
             await asyncio.sleep(self._command_timeout)
@@ -1643,15 +1587,3 @@ class CyncUserData:
                     else:
                         _LOGGER.warning("Subgroup %s not found. Removing from room %s.", subgroup_id, room_id)
                         room_info["subgroups"].remove(subgroup_id)
-
-
-class LostConnection(Exception):
-    """Lost connection to Cync Server"""
-
-
-class ShuttingDown(Exception):
-    """Cync client shutting down"""
-
-
-class InvalidCyncConfiguration(Exception):
-    """Cync configuration is not supported"""
