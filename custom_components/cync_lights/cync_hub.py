@@ -416,66 +416,70 @@ class CyncHub:
             _LOGGER.debug("Received Pipe Sync request packet.")
             # Implement Pipe Sync request handling if necessary
 
-    async def handle_pipe_set_status(self, is_response: bool, payload: bytes):
-        """
-        Handle Set Status pipe packets.
-        """
-        if is_response:
-            if len(payload) < 6:
-                _LOGGER.error("Set Status acknowledgment packet too short.")
-                return
-            seq_num = struct.unpack(">H", payload[1:3])[0]
-            _LOGGER.debug(f"Received Set Status acknowledgment for sequence {seq_num}")
-            self.execute_callback(seq_num)
-        else:
-            _LOGGER.debug("Received Set Status request packet.")
-            # Implement Set Status request handling if necessary
+async def handle_pipe_set_status(self, is_response: bool, payload: bytes):
+    """
+    Handle Set Status pipe packets.
+    """
+    if is_response:
+        if len(payload) < 6:
+            _LOGGER.error("Set Status acknowledgment packet too short.")
+            return
+        seq_num = struct.unpack(">H", payload[4:6])[0]
+        _LOGGER.debug(f"Received Set Status acknowledgment for sequence {seq_num}")
+        self.execute_callback(seq_num)
+    else:
+        _LOGGER.debug("Received Set Status request packet.")
+        # Implement Set Status request handling if necessary
 
-    async def handle_pipe_set_lum(self, is_response: bool, payload: bytes):
-        """
-        Handle Set Lum pipe packets.
-        """
-        if is_response:
-            if len(payload) < 6:
-                _LOGGER.error("Set Lum acknowledgment packet too short.")
-                return
-            seq_num = struct.unpack(">H", payload[1:3])[0]
-            _LOGGER.debug(f"Received Set Lum acknowledgment for sequence {seq_num}")
-            self.execute_callback(seq_num)
-        else:
-            _LOGGER.debug("Received Set Lum request packet.")
-            # Implement Set Lum request handling if necessary
 
-    async def handle_pipe_set_ct(self, is_response: bool, payload: bytes):
-        """
-        Handle Set CT pipe packets.
-        """
-        if is_response:
-            if len(payload) < 6:
-                _LOGGER.error("Set CT acknowledgment packet too short.")
-                return
-            seq_num = struct.unpack(">H", payload[1:3])[0]
-            _LOGGER.debug(f"Received Set CT acknowledgment for sequence {seq_num}")
-            self.execute_callback(seq_num)
-        else:
-            _LOGGER.debug("Received Set CT request packet.")
-            # Implement Set CT request handling if necessary
+async def handle_pipe_set_lum(self, is_response: bool, payload: bytes):
+    """
+    Handle Set Lum pipe packets.
+    """
+    if is_response:
+        if len(payload) < 6:
+            _LOGGER.error("Set Lum acknowledgment packet too short.")
+            return
+        seq_num = struct.unpack(">H", payload[4:6])[0]
+        _LOGGER.debug(f"Received Set Lum acknowledgment for sequence {seq_num}")
+        self.execute_callback(seq_num)
+    else:
+        _LOGGER.debug("Received Set Lum request packet.")
+        # Implement Set Lum request handling if necessary
 
-    async def handle_pipe_get_status_paginated(self, is_response: bool, payload: bytes):
-        """
-        Handle Get Status Paginated pipe packets.
-        """
-        if is_response:
-            _LOGGER.debug("Received Get Status Paginated response packet.")
-            responses = self.parse_status_paginated_response(payload)
-            for response in responses:
-                _LOGGER.debug(f"Device {response.device} - Status: {'On' if response.is_on else 'Off'}, "
-                              f"Brightness: {response.brightness}, CT: {response.ct}, RGB: {response.rgb}")
-                # Update device states in Home Assistant accordingly
-                # This requires integration with Home Assistant's state management
-        else:
-            _LOGGER.debug("Received Get Status Paginated request packet.")
-            # Implement Get Status Paginated request handling if necessary
+
+async def handle_pipe_set_ct(self, is_response: bool, payload: bytes):
+    """
+    Handle Set CT pipe packets.
+    """
+    if is_response:
+        if len(payload) < 6:
+            _LOGGER.error("Set CT acknowledgment packet too short.")
+            return
+        seq_num = struct.unpack(">H", payload[4:6])[0]
+        _LOGGER.debug(f"Received Set CT acknowledgment for sequence {seq_num}")
+        self.execute_callback(seq_num)
+    else:
+        _LOGGER.debug("Received Set CT request packet.")
+        # Implement Set CT request handling if necessary
+
+
+async def handle_pipe_get_status_paginated(self, is_response: bool, payload: bytes):
+    """
+    Handle Get Status Paginated pipe packets.
+    """
+    if is_response:
+        _LOGGER.debug("Received Get Status Paginated response packet.")
+        responses = self.parse_status_paginated_response(payload)
+        for response in responses:
+            _LOGGER.debug(f"Device {response.device} - Status: {'On' if response.is_on else 'Off'}, "
+                          f"Brightness: {response.brightness}, CT: {response.ct}, RGB: {response.rgb}")
+            # Update device states in Home Assistant accordingly
+            # This requires integration with Home Assistant's state management
+    else:
+        _LOGGER.debug("Received Get Status Paginated request packet.")
+        # Implement Get Status Paginated request handling if necessary
+
 
     def parse_status_paginated_response(self, payload: bytes) -> List[StatusPaginatedResponse]:
         """
@@ -536,7 +540,7 @@ class CyncHub:
         else:
             _LOGGER.warning(f"No pending command found for sequence {seq_num}.")    
 
-    async def send_request(self, packet: Packet, callback: Optional[Callable[[str], None]] = None):
+    async def send_request(self, packet: Packet, callback: Optional[Callable[[int], None]] = None):
         """
         Send a request packet to the server with an optional callback for acknowledgment.
         """
@@ -577,87 +581,104 @@ class CyncHub:
 
     # Packet creation methods
     def create_set_status_packet(self, device_id: int, seq: int, device_index: int, status: int) -> Packet:
-        data = bytearray([
-            0, 0, 0, 0, 0,
-            (device_index >> 8) & 0xFF, device_index & 0xFF,  # Device index
-            0, PACKET_PIPE_TYPE_SET_STATUS,  # Command type
-            0, 0,  # Unknown bytes
-            status,
-            0
-        ])
-        # Embed the sequence number into bytes 1-2 of the data
-        data[4] = (seq >> 8) & 0xFF  # High byte
-        data[5] = seq & 0xFF         # Low byte
-    
+        # Device ID: 4 bytes, big-endian
+        device_id_bytes = device_id.to_bytes(4, 'big')
+        # Sequence Number: 2 bytes, big-endian
+        seq_num_bytes = struct.pack(">H", seq)
+        # Additional fixed bytes
+        fixed_bytes = bytes([0x00]) + struct.pack(">H", 0x7e00) + bytes([1, 0, 0, 0xf8])
+        # Subtype: 1 byte
+        subtype_byte = PACKET_PIPE_TYPE_SET_STATUS.to_bytes(1, 'big')
+        # Payload: device_index (2 bytes, big-endian), command-specific data
+        payload = struct.pack(">H", device_index) + bytes([status])
+        # Payload Length: 1 byte
+        payload_length = len(payload).to_bytes(1, 'big')
+        # Combine all parts
+        data = device_id_bytes + seq_num_bytes + fixed_bytes + subtype_byte + payload_length + payload + bytes([0x00, 0x00, 0x00])
+        
         packet = Packet(
             packet_type=PACKET_TYPE_PIPE,
             is_response=False,
-            data=bytes([PACKET_PIPE_TYPE_SET_STATUS]) + bytes(data)
+            data=data
         )
         _LOGGER.debug(f"Created Set Status Packet: {packet}")
         return packet
 
 
+
     def create_set_lum_packet(self, device_id: int, seq: int, device_index: int, brightness: int) -> Packet:
         if brightness < 1 or brightness > 100:
             raise ValueError("Brightness must be between 1 and 100.")
-        data = bytearray([
-            0, 0, 0, 0, 0,
-            (device_index >> 8) & 0xFF, device_index & 0xFF,  # Device index
-            0, PACKET_PIPE_TYPE_SET_LUM,  # Command type
-            0, 0,  # Unknown bytes
-            brightness
-        ])
-        # Embed the sequence number into bytes 1-2 of the data
-        data[4] = (seq >> 8) & 0xFF  # High byte
-        data[5] = seq & 0xFF         # Low byte
-    
+        # Device ID: 4 bytes, big-endian
+        device_id_bytes = device_id.to_bytes(4, 'big')
+        # Sequence Number: 2 bytes, big-endian
+        seq_num_bytes = struct.pack(">H", seq)
+        # Additional fixed bytes
+        fixed_bytes = bytes([0x00]) + struct.pack(">H", 0x7e00) + bytes([1, 0, 0, 0xf8])
+        # Subtype: 1 byte
+        subtype_byte = PACKET_PIPE_TYPE_SET_LUM.to_bytes(1, 'big')
+        # Payload: device_index (2 bytes, big-endian), command-specific data
+        payload = struct.pack(">H", device_index) + bytes([brightness])
+        # Payload Length: 1 byte
+        payload_length = len(payload).to_bytes(1, 'big')
+        # Combine all parts
+        data = device_id_bytes + seq_num_bytes + fixed_bytes + subtype_byte + payload_length + payload + bytes([0x00, 0x00, 0x00])
+        
         packet = Packet(
             packet_type=PACKET_TYPE_PIPE,
             is_response=False,
-            data=bytes([PACKET_PIPE_TYPE_SET_LUM]) + bytes(data)
+            data=data
         )
         _LOGGER.debug(f"Created Set Lum Packet: {packet}")
         return packet
+
     
     def create_set_ct_packet(self, device_id: int, seq: int, device_index: int, ct: int) -> Packet:
         if ct < 0 or ct > 100:
             raise ValueError("Color tone must be between 0 and 100.")
-        data = bytearray([
-            0, 0, 0, 0, 0,
-            (device_index >> 8) & 0xFF, device_index & 0xFF,  # Device index
-            0, PACKET_PIPE_TYPE_SET_CT,  # Command type
-            0, 0,
-            0x05, ct
-        ])
-        # Embed the sequence number into bytes 1-2 of the data
-        data[4] = (seq >> 8) & 0xFF  # High byte
-        data[5] = seq & 0xFF         # Low byte
-    
+        # Device ID: 4 bytes, big-endian
+        device_id_bytes = device_id.to_bytes(4, 'big')
+        # Sequence Number: 2 bytes, big-endian
+        seq_num_bytes = struct.pack(">H", seq)
+        # Additional fixed bytes
+        fixed_bytes = bytes([0x00]) + struct.pack(">H", 0x7e00) + bytes([1, 0, 0, 0xf8])
+        # Subtype: 1 byte
+        subtype_byte = PACKET_PIPE_TYPE_SET_CT.to_bytes(1, 'big')
+        # Payload: device_index (2 bytes, big-endian), command-specific data
+        payload = struct.pack(">H", device_index) + bytes([0x05, ct])
+        # Payload Length: 1 byte
+        payload_length = len(payload).to_bytes(1, 'big')
+        # Combine all parts
+        data = device_id_bytes + seq_num_bytes + fixed_bytes + subtype_byte + payload_length + payload + bytes([0x00, 0x00, 0x00])
+        
         packet = Packet(
             packet_type=PACKET_TYPE_PIPE,
             is_response=False,
-            data=bytes([PACKET_PIPE_TYPE_SET_CT]) + bytes(data)
+            data=data
         )
         _LOGGER.debug(f"Created Set CT Packet: {packet}")
         return packet
     
     def create_set_rgb_packet(self, device_id: int, seq: int, device_index: int, r: int, g: int, b: int) -> Packet:
-        data = bytearray([
-            0, 0, 0, 0, 0,
-            (device_index >> 8) & 0xFF, device_index & 0xFF,  # Device index
-            0, PACKET_PIPE_TYPE_SET_CT,  # Command type (Assuming CT subtype for RGB)
-            0, 0,
-            0x04, r, g, b
-        ])
-        # Embed the sequence number into bytes 1-2 of the data
-        data[4] = (seq >> 8) & 0xFF  # High byte
-        data[5] = seq & 0xFF         # Low byte
-    
+        # Device ID: 4 bytes, big-endian
+        device_id_bytes = device_id.to_bytes(4, 'big')
+        # Sequence Number: 2 bytes, big-endian
+        seq_num_bytes = struct.pack(">H", seq)
+        # Additional fixed bytes
+        fixed_bytes = bytes([0x00]) + struct.pack(">H", 0x7e00) + bytes([1, 0, 0, 0xf8])
+        # Subtype: 1 byte (Assuming CT subtype for RGB as per Go API)
+        subtype_byte = PACKET_PIPE_TYPE_SET_CT.to_bytes(1, 'big')
+        # Payload: device_index (2 bytes, big-endian), command-specific data
+        payload = struct.pack(">H", device_index) + bytes([0x04, r, g, b])
+        # Payload Length: 1 byte
+        payload_length = len(payload).to_bytes(1, 'big')
+        # Combine all parts
+        data = device_id_bytes + seq_num_bytes + fixed_bytes + subtype_byte + payload_length + payload + bytes([0x00, 0x00, 0x00])
+        
         packet = Packet(
             packet_type=PACKET_TYPE_PIPE,
             is_response=False,
-            data=bytes([PACKET_PIPE_TYPE_SET_CT]) + bytes(data)
+            data=data
         )
         _LOGGER.debug(f"Created Set RGB Packet: {packet}")
         return packet
@@ -862,9 +883,10 @@ class CyncRoom:
         attempts = 0
         update_received = False
         seq_ct = None  # Initialize seq_ct to None
-        seq_brightness=None
-        seq_rgb=None
-        seq_status=None
+        seq_brightness = None
+        seq_status = None
+        seq_rgb = None  # Initialize seq_rgb if needed for RGB support
+    
         while not update_received and attempts < int(self._command_retry_time / self._command_timeout):
             # Unique sequence numbers for each command
             seq_status = self.hub.get_seq_num()
@@ -900,7 +922,7 @@ class CyncRoom:
             # Send Set Color Temperature with unique seq_num
             if self.support_color_temp:
                 seq_ct = self.hub.get_seq_num()
-                color_temp_packet = self.hub.create_set_ct_packet(controller, seq_ct, device_index=0, color_temp=color_temp)
+                color_temp_packet = self.hub.create_set_ct_packet(controller, seq_ct, device_index=0, ct=color_temp)
                 await self.hub.send_request(color_temp_packet, self.command_received)
     
             # Wait for all acknowledgments
@@ -924,18 +946,20 @@ class CyncRoom:
         while not update_received and attempts < int(self._command_retry_time / self._command_timeout):
             seq = self.hub.get_seq_num()
             controller = self.controllers[attempts % len(self.controllers)] if self.controllers else self.default_controller
-
-            # Send Set Status (Off)
-            status_packet = self.hub.create_set_status_packet(controller, seq, device_index=0, state=0)
-            await self.hub.send_request(status_packet)
-
-            self.hub.pending_commands[seq] = self.command_received
+    
+            # Send Set Status (Off) with unique seq_num
+            status_packet = self.hub.create_set_status_packet(controller, seq, device_index=0, status=0)
+            await self.hub.send_request(status_packet, self.command_received)
+    
+            # Wait for acknowledgment
             await asyncio.sleep(self._command_timeout)
-            if self.hub.pending_commands.get(seq, None) is not None:
-                self.hub.pending_commands.pop(seq)
-                attempts += 1
-            else:
+    
+            # Check if the command has been acknowledged
+            if not self.hub.pending_commands.get(seq):
                 update_received = True
+            else:
+                attempts += 1
+                _LOGGER.debug(f"Attempt {attempts} to turn off the room lights.")
 
     def command_received(self, seq: int):
         """Handle command acknowledgment from the Cync server."""
@@ -1107,10 +1131,10 @@ class CyncSwitch:
         """Turn on the light with optional brightness, color temperature, RGB color, effect, and transition."""
         attempts = 0
         update_received = False
-        seq_ct=None
-        seq_brightness=None
-        seq_rgb=None
-        seq_status=None
+        seq_ct = None
+        seq_brightness = None
+        seq_rgb = None
+        seq_status = None
     
         # Convert brightness to percentage if needed
         if brightness is not None:
@@ -1170,7 +1194,7 @@ class CyncSwitch:
             # Send Set Color Temperature with unique seq_num
             if self.support_color_temp and color_temp is not None:
                 seq_ct = self.hub.get_seq_num()
-                color_temp_packet = self.hub.create_set_ct_packet(controller, seq_ct, self.mesh_id_int, color_temp)
+                color_temp_packet = self.hub.create_set_ct_packet(controller, seq_ct, self.mesh_id_int, ct=color_temp)
                 await self.hub.send_request(color_temp_packet, self.command_received)
     
             # Send Set RGB with unique seq_num
