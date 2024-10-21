@@ -587,10 +587,7 @@ class CyncHub:
 
     # Packet creation methods
     def create_set_status_packet(self, device_id: int, seq: int, device_index: int, status: int) -> Packet:
-        """
-        Create a Set Status packet.
-        """
-        data = bytes([
+        data = bytearray([
             0, 0, 0, 0, 0,
             (device_index >> 8) & 0xFF, device_index & 0xFF,  # Device index
             0, PACKET_PIPE_TYPE_SET_STATUS,  # Command type
@@ -598,84 +595,96 @@ class CyncHub:
             status,
             0
         ])
+        # Embed the sequence number into bytes 1-2 of the data
+        data[1] = (seq >> 8) & 0xFF  # High byte
+        data[2] = seq & 0xFF         # Low byte
+    
         packet = Packet(
             packet_type=PACKET_TYPE_PIPE,
             is_response=False,
-            data=bytes([PACKET_PIPE_TYPE_SET_STATUS]) + data
+            data=bytes([PACKET_PIPE_TYPE_SET_STATUS]) + bytes(data)
         )
+        _LOGGER.debug(f"Created Set Status Packet: {packet}")
         return packet
 
     def create_set_lum_packet(self, device_id: int, seq: int, device_index: int, brightness: int) -> Packet:
-        """
-        Create a Set Lum packet.
-        """
         if brightness < 1 or brightness > 100:
             raise ValueError("Brightness must be between 1 and 100.")
-        data = bytes([
+        data = bytearray([
             0, 0, 0, 0, 0,
             (device_index >> 8) & 0xFF, device_index & 0xFF,  # Device index
             0, PACKET_PIPE_TYPE_SET_LUM,  # Command type
             0, 0,  # Unknown bytes
             brightness
         ])
+        # Embed the sequence number into bytes 1-2 of the data
+        data[1] = (seq >> 8) & 0xFF  # High byte
+        data[2] = seq & 0xFF         # Low byte
+    
         packet = Packet(
             packet_type=PACKET_TYPE_PIPE,
             is_response=False,
-            data=bytes([PACKET_PIPE_TYPE_SET_LUM]) + data
+            data=bytes([PACKET_PIPE_TYPE_SET_LUM]) + bytes(data)
         )
+        _LOGGER.debug(f"Created Set Lum Packet: {packet}")
         return packet
-
+    
     def create_set_ct_packet(self, device_id: int, seq: int, device_index: int, ct: int) -> Packet:
-        """
-        Create a Set CT packet.
-        """
         if ct < 0 or ct > 100:
             raise ValueError("Color tone must be between 0 and 100.")
-        data = bytes([
+        data = bytearray([
             0, 0, 0, 0, 0,
             (device_index >> 8) & 0xFF, device_index & 0xFF,  # Device index
             0, PACKET_PIPE_TYPE_SET_CT,  # Command type
             0, 0,
             0x05, ct
         ])
+        # Embed the sequence number into bytes 1-2 of the data
+        data[1] = (seq >> 8) & 0xFF  # High byte
+        data[2] = seq & 0xFF         # Low byte
+    
         packet = Packet(
             packet_type=PACKET_TYPE_PIPE,
             is_response=False,
-            data=bytes([PACKET_PIPE_TYPE_SET_CT]) + data
+            data=bytes([PACKET_PIPE_TYPE_SET_CT]) + bytes(data)
         )
+        _LOGGER.debug(f"Created Set CT Packet: {packet}")
         return packet
-
+    
     def create_set_rgb_packet(self, device_id: int, seq: int, device_index: int, r: int, g: int, b: int) -> Packet:
-        """
-        Create a Set RGB packet.
-        """
-        data = bytes([
+        data = bytearray([
             0, 0, 0, 0, 0,
             (device_index >> 8) & 0xFF, device_index & 0xFF,  # Device index
             0, PACKET_PIPE_TYPE_SET_CT,  # Command type (Assuming CT subtype for RGB)
             0, 0,
             0x04, r, g, b
         ])
+        # Embed the sequence number into bytes 1-2 of the data
+        data[1] = (seq >> 8) & 0xFF  # High byte
+        data[2] = seq & 0xFF         # Low byte
+    
         packet = Packet(
             packet_type=PACKET_TYPE_PIPE,
             is_response=False,
-            data=bytes([PACKET_PIPE_TYPE_SET_CT]) + data
+            data=bytes([PACKET_PIPE_TYPE_SET_CT]) + bytes(data)
         )
+        _LOGGER.debug(f"Created Set RGB Packet: {packet}")
         return packet
-
+    
     def create_get_status_paginated_packet(self, device_id: int, seq: int) -> Packet:
-        """
-        Create a Get Status Paginated packet.
-        """
-        data = bytes([
+        data = bytearray([
             0x00, 0x00, 0x00, 0xFF, 0xFF, 0x00
         ])
+        # Embed the sequence number into bytes 1-2 of the data if required
+        # Assuming Get Status Paginated doesn't require seq_num, based on protocol
         packet = Packet(
             packet_type=PACKET_TYPE_PIPE,
             is_response=False,
-            data=bytes([PACKET_PIPE_TYPE_GET_STATUS_PAGINATED]) + data
+            data=bytes([PACKET_PIPE_TYPE_GET_STATUS_PAGINATED]) + bytes(data)
         )
+        _LOGGER.debug(f"Created Get Status Paginated Packet: {packet}")
         return packet
+
 
     # Command sending methods
     async def set_device_status(
