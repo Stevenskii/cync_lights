@@ -69,7 +69,7 @@ class CyncMotionSensorEntity(BinarySensorEntity):
 
     async def async_added_to_hass(self) -> None:
         """Call when the entity is added to Home Assistant."""
-        self.motion_sensor.register(self.async_write_ha_state, self.hass)
+        self.sensor.register(self.async_write_ha_state)
 
     async def async_will_remove_from_hass(self) -> None:
         """Call when the entity is about to be removed from Home Assistant."""

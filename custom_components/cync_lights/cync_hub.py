@@ -709,7 +709,6 @@ class CyncSwitch:
     def reset(self) -> None:
         """Remove previously registered callback."""
         self._update_callback = None
-        self._hass = None
 
     def register_room_updater(self, parent_updater):
         """Register callback for room updates."""
@@ -878,10 +877,9 @@ class CyncMotionSensor:
         self._update_callback = None
         self._hass = None
 
-    def register(self, update_callback, hass) -> None:
+    def register(self, update_callback) -> None:
         """Register callback, called when sensor changes state."""
         self._update_callback = update_callback
-        self._hass = hass
 
     def reset(self) -> None:
         """Remove previously registered callback."""
@@ -909,10 +907,9 @@ class CyncAmbientLightSensor:
         self._update_callback = None
         self._hass = None
 
-    def register(self, update_callback, hass) -> None:
+    def register(self, update_callback) -> None:
         """Register callback, called when sensor changes state."""
         self._update_callback = update_callback
-        self._hass = hass
 
     def reset(self) -> None:
         """Remove previously registered callback."""
