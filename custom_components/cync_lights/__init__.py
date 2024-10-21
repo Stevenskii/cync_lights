@@ -30,6 +30,7 @@ async def async_setup_entry(
 
     # Initialize the CyncHub instance
     hub = CyncHub(
+        user_data=user_data,
         hass=hass,
         data=data,
         options=options
