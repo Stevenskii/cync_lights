@@ -64,12 +64,6 @@ from typing import Callable, Dict, Optional, List, Tuple, Any
 _LOGGER = logging.getLogger(__name__)
 
 # Define custom exceptions
-class LostConnection(Exception):
-    pass
-
-class ShuttingDown(Exception):
-    pass
-
 class UnreachableError(Exception):
     pass
 
@@ -260,40 +254,80 @@ class CyncHub:
 
     async def connect(self):
         """
-        Establish TCP connection and authenticate.
+        Establish TCP connection and authenticate, with retries and task management.
         """
-        await self.setup_ssl_context()  # Setup SSL context asynchronously
-
-        try:
-            self.reader, self.writer = await asyncio.open_connection(
-                self.host,
-                self.port,
-                ssl=self.ssl_context
-            )
-            _LOGGER.debug("TCP connection established.")
-            # Send login code
-            self.writer.write(self.login_code)
-            await self.writer.drain()
-            _LOGGER.debug(f"Sent login code: {self.login_code.hex()}")
-
-            # Await login response
-            login_response = await self.reader.read(1000)
-            _LOGGER.debug(f"Login response: {login_response.hex()}")
-
-            if not login_response:
-                _LOGGER.error("Authentication failed: no response from server")
-                raise Exception("Authentication failed: no response from server")
-
-            # Process login response
-            if login_response.startswith(b'\x18\x00\x00\x00\x02\x00\x00'):
-                self.logged_in = True
-                _LOGGER.info("Successfully authenticated with the server.")
-            else:
-                _LOGGER.error(f"Authentication failed with response data: {login_response.hex()}")
-                raise Exception("Authentication failed with response data.")
-        except Exception as e:
-            _LOGGER.error(f"Failed to connect or authenticate: {e}")
-            raise
+        while not self.shutting_down:
+            try:
+                await self.setup_ssl_context()  # Setup SSL context asynchronously
+                
+                # Attempt to establish a secure connection
+                try:
+                    _LOGGER.debug("Trying to establish SSL connection on port 23779.")
+                    self.reader, self.writer = await asyncio.open_connection(self.host, self.port, ssl=self.ssl_context)
+                except Exception:
+                    _LOGGER.warning("SSL connection failed. Retrying with SSL context check disabled.")
+                    self.ssl_context.check_hostname = False
+                    self.ssl_context.verify_mode = ssl.CERT_NONE
+                    try:
+                        self.reader, self.writer = await asyncio.open_connection(self.host, self.port, ssl=self.ssl_context)
+                    except Exception:
+                        _LOGGER.warning("SSL context failed. Falling back to unsecured connection.")
+                        self.reader, self.writer = await asyncio.open_connection(self.host, 23778)
+                
+                _LOGGER.debug("TCP connection established.")
+    
+                # Send login code
+                self.writer.write(self.login_code)
+                await self.writer.drain()
+                _LOGGER.debug(f"Sent login code: {self.login_code.hex()}")
+    
+                # Await login response
+                login_response = await self.reader.read(1000)
+                _LOGGER.debug(f"Login response: {login_response.hex()}")
+    
+                if not login_response:
+                    _LOGGER.error("Authentication failed: no response from server")
+                    raise Exception("Authentication failed: no response from server")
+    
+                # Process login response
+                if login_response.startswith(b'\x18\x00\x00\x00\x02\x00\x00'):
+                    self.logged_in = True
+                    _LOGGER.info("Successfully authenticated with the server.")
+                else:
+                    _LOGGER.error(f"Authentication failed with response data: {login_response.hex()}")
+                    raise Exception("Authentication failed with response data.")
+    
+                # Create tasks for handling TCP messages and other maintenance tasks
+                read_tcp_messages = asyncio.create_task(self.read_tcp_messages(), name="Read TCP Messages")
+                maintain_connection = asyncio.create_task(self._maintain_connection(), name="Maintain Connection")
+                update_state = asyncio.create_task(self._update_state(), name="Update State")
+                update_connected_devices = asyncio.create_task(self._update_connected_devices(), name="Update Connected Devices")
+    
+                read_write_tasks = [read_tcp_messages, maintain_connection, update_state, update_connected_devices]
+    
+                # Wait for any task to raise an exception or shutdown the client
+                done, pending = await asyncio.wait(read_write_tasks, return_when=asyncio.FIRST_EXCEPTION)
+    
+                # Handle task results or exceptions
+                for task in done:
+                    try:
+                        result = task.result()
+                    except Exception as e:
+                        _LOGGER.error(f"{type(e).__name__}: {e}")
+    
+                # Cancel remaining tasks if needed
+                for task in pending:
+                    task.cancel()
+    
+                if not self.shutting_down:
+                    _LOGGER.error("Connection to Cync server reset, restarting in 15 seconds.")
+                    await asyncio.sleep(15)
+                else:
+                    _LOGGER.debug("Cync client shutting down.")
+            
+            except Exception as e:
+                _LOGGER.error(f"{type(e).__name__}: {e}")
+                await asyncio.sleep(5)  # Retry connection after a delay if an error occurs
 
     def _create_ssl_context(self):
         """Create SSL context outside of the event loop."""
