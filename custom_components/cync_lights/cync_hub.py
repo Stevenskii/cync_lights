@@ -192,6 +192,8 @@ class CyncHub:
             if len(data) == 0:
                 self.logged_in = False
                 raise LostConnection
+            while len(data) >= 5:
+                _LOGGER.debug(f"Received data: {data.hex()}")
             while len(data) >= 12:
                 packet_type = int(data[0]) >> 4
                 packet_length = struct.unpack(">I", data[1:5])[0]
