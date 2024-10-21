@@ -146,7 +146,6 @@ class StatusPaginatedResponse:
 class CyncHub:
     def __init__(
         self,
-        user_data: Any,
         hass: Any,
         data: Dict[str, Any],
         options: Dict[str, Any],
@@ -161,23 +160,23 @@ class CyncHub:
         self.use_ssl = options.get("use_ssl", True)
 
         # Initialize device attributes
-        self.home_devices = user_data['cync_config']['home_devices']
-        self.home_controllers = user_data['cync_config']['home_controllers']
-        self.switchID_to_homeID = user_data['cync_config']['switchID_to_homeID']
+        self.home_devices = data['cync_config']['home_devices']
+        self.home_controllers = data['cync_config']['home_controllers']
+        self.switchID_to_homeID = data['cync_config']['switchID_to_homeID']
         self.connected_devices = {home_id: [] for home_id in self.home_controllers.keys()}
         self.shutting_down = False
-        self.cync_rooms = {room_id: CyncRoom(room_id, room_info, self) for room_id, room_info in user_data['cync_config']['rooms'].items()}
+        self.cync_rooms = {room_id: CyncRoom(room_id, room_info, self) for room_id, room_info in data['cync_config']['rooms'].items()}
         self.cync_switches = {
             device_id: CyncSwitch(device_id, switch_info, self.cync_rooms.get(switch_info['room'], None), self)
-            for device_id, switch_info in user_data['cync_config']['devices'].items() if switch_info.get("ONOFF", False)
+            for device_id, switch_info in data['cync_config']['devices'].items() if switch_info.get("ONOFF", False)
         }
         self.cync_motion_sensors = {
             device_id: CyncMotionSensor(device_id, device_info, self.cync_rooms.get(device_info['room'], None))
-            for device_id, device_info in user_data['cync_config']['devices'].items() if device_info.get("MOTION", False)
+            for device_id, device_info in data['cync_config']['devices'].items() if device_info.get("MOTION", False)
         }
         self.cync_ambient_light_sensors = {
             device_id: CyncAmbientLightSensor(device_id, device_info, self.cync_rooms.get(device_info['room'], None))
-            for device_id, device_info in user_data['cync_config']['devices'].items() if device_info.get("AMBIENT_LIGHT", False)
+            for device_id, device_info in data['cync_config']['devices'].items() if device_info.get("AMBIENT_LIGHT", False)
         }
         self.switchID_to_deviceIDs = {
             device_info.switch_id: [dev_id for dev_id, dev_info in self.cync_switches.items() if dev_info.switch_id == device_info.switch_id]
