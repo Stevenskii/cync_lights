@@ -72,7 +72,7 @@ class CyncHub:
         self.writer = None
         self.login_code = bytearray(user_data['cync_credentials'])
         self.logged_in = False
-        self.home_devices = user_data['cync_config']['home_devices']
+        self.home_devices = user_data['cync_config']['home_devices']  # Dict[str, Dict[int, str]]
         self.home_controllers = user_data['cync_config']['home_controllers']
         self.switchID_to_homeID = user_data['cync_config']['switchID_to_homeID']
         self.connected_devices = {home_id: [] for home_id in self.home_controllers.keys()}
@@ -204,7 +204,10 @@ class CyncHub:
                         if packet_type == PACKET_TYPE_PIPE:
                             switch_id = str(struct.unpack(">I", packet[0:4])[0])
                             seq = struct.unpack(">H", packet[4:6])[0]
-                            home_id = self.switchID_to_homeID[switch_id]
+                            home_id = self.switchID_to_homeID.get(switch_id)
+                            if home_id is None:
+                                _LOGGER.error(f"switch_id {switch_id} not found in switchID_to_homeID")
+                                break
                             subtype = packet[11]
                             if subtype == PIPE_SUBTYPE_GET_STATUS_PAGINATED:
                                 # Parse initial state packet
@@ -212,8 +215,10 @@ class CyncHub:
                                 payload = packet[12:]
                                 while len(payload) >= 19:
                                     device_index = payload[3]
-                                    deviceID = self.home_devices[home_id][device_index]
-                                    if deviceID in self.cync_switches:
+                                    deviceID = self.home_devices[home_id].get(device_index)
+                                    if deviceID is None:
+                                        _LOGGER.error(f"Device index {device_index} not found in home_devices[{home_id}]")
+                                    elif deviceID in self.cync_switches:
                                         state = payload[4] > 0
                                         brightness = payload[5] if state else 0
                                         color_temp = payload[6]
@@ -411,6 +416,129 @@ class CyncHub:
         r, g, b = rgb_values
         packet = self._create_set_rgb_packet(switch_id, seq, int.from_bytes(mesh_id, 'big'), r, g, b)
         self.loop.call_soon_threadsafe(self.send_request, packet)
+
+    async def _process_home_info(
+        self,
+        home_id: str,
+        home: Dict[str, Any],
+        home_info: Dict[str, Any],
+        home_devices: Dict[str, Dict[int, str]],  # Changed to Dict[int, str]
+        home_controllers: Dict[str, List[str]],
+        switchID_to_homeID: Dict[str, str],
+        devices: Dict[str, Any],
+        rooms: Dict[str, Any]
+    ) -> None:
+        """Process home information and populate devices and rooms."""
+        bulbs_array = home_info['bulbsArray']
+        groups_array = home_info['groupsArray']
+
+        # Initialize home_devices[home_id] as a dictionary
+        home_devices[home_id] = {}
+        home_controllers[home_id] = []
+
+        for device in bulbs_array:
+            device_type = device['deviceType']
+            device_id = str(device['deviceID'])
+            # Corrected current_index calculation
+            dev_id_mod_home_id = device['deviceID'] % int(home_id)
+            current_index = (dev_id_mod_home_id % 1000) + ((dev_id_mod_home_id // 1000) * 256)
+            home_devices[home_id][current_index] = device_id  # Store in dict
+
+            devices[device_id] = {
+                'name': device.get('displayName', 'Unknown'),
+                'mesh_id': current_index,
+                'switch_id': str(device.get('switchID', 0)),
+                'ONOFF': device_type in Capabilities['ONOFF'],
+                'BRIGHTNESS': device_type in Capabilities["BRIGHTNESS"],
+                "COLORTEMP": device_type in Capabilities["COLORTEMP"],
+                "RGB": device_type in Capabilities["RGB"],
+                "MOTION": device_type in Capabilities["MOTION"],
+                "AMBIENT_LIGHT": device_type in Capabilities["AMBIENT_LIGHT"],
+                "WIFICONTROL": device_type in Capabilities["WIFICONTROL"],
+                "PLUG": device_type in Capabilities["PLUG"],
+                "FAN": device_type in Capabilities["FAN"],
+                'home_name': home.get('name', 'Unknown'),
+                'room': '',
+                'room_name': ''
+            }
+            if str(device_type) in Capabilities['MULTIELEMENT'] and current_index < 256:
+                devices[device_id]['MULTIELEMENT'] = Capabilities['MULTIELEMENT'][str(device_type)]
+            if devices[device_id].get('WIFICONTROL', False) and device.get('switchID', 0) > 0:
+                switch_id_str = str(device['switchID'])
+                switchID_to_homeID[switch_id_str] = home_id
+                devices[device_id]['switch_controller'] = switch_id_str
+                if switch_id_str not in home_controllers[home_id]:
+                    home_controllers[home_id].append(switch_id_str)
+        if not home_controllers[home_id]:
+            _LOGGER.warning("No controllers found in home %s. Skipping home.", home_id)
+            # Remove devices from this home
+            for device in bulbs_array:
+                device_id = str(device['deviceID'])
+                devices.pop(device_id, None)
+            home_devices.pop(home_id, None)
+            home_controllers.pop(home_id, None)
+            return
+
+        for room in groups_array:
+            if room.get('deviceIDArray') or room.get('subgroupIDArray'):
+                room_id = f"{home_id}-{room['groupID']}"
+                room_controller = home_controllers[home_id][0]
+                device_ids = room.get('deviceIDArray', [])
+                available_controllers = [
+                    devices[home_devices[home_id].get(
+                        ((dev_id % int(home_id)) % 1000) + ((dev_id % int(home_id)) // 1000) * 256
+                    )].get('switch_controller')
+                    for dev_id in device_ids
+                    if devices.get(home_devices[home_id].get(
+                        ((dev_id % int(home_id)) % 1000) + ((dev_id % int(home_id)) // 1000) * 256
+                    )) and 'switch_controller' in devices[home_devices[home_id][
+                        ((dev_id % int(home_id)) % 1000) + ((dev_id % int(home_id)) // 1000) * 256
+                    ]]
+                ]
+                if available_controllers:
+                    room_controller = available_controllers[0]
+                for dev_id in device_ids:
+                    index = ((dev_id % int(home_id)) % 1000) + ((dev_id % int(home_id)) // 1000) * 256
+                    device_id = home_devices[home_id].get(index)
+                    if device_id and device_id in devices:
+                        device = devices[device_id]
+                        device['room'] = room_id
+                        device['room_name'] = room.get('displayName', 'Unknown')
+                        if 'switch_controller' not in device and device.get('ONOFF', False):
+                            device['switch_controller'] = room_controller
+                rooms[room_id] = {
+                    'name': room.get('displayName', 'Unknown'),
+                    'mesh_id': room['groupID'],
+                    'room_controller': room_controller,
+                    'home_name': home.get('name', 'Unknown'),
+                    'switches': [
+                        home_devices[home_id].get(
+                            ((dev_id % int(home_id)) % 1000) + ((dev_id % int(home_id)) // 1000) * 256
+                        )
+                        for dev_id in device_ids
+                        if devices.get(home_devices[home_id].get(
+                            ((dev_id % int(home_id)) % 1000) + ((dev_id % int(home_id)) // 1000) * 256
+                        )) and devices[home_devices[home_id][
+                            ((dev_id % int(home_id)) % 1000) + ((dev_id % int(home_id)) // 1000) * 256
+                        ]].get('ONOFF', False)
+                    ],
+                    'isSubgroup': room.get('isSubgroup', False),
+                    'subgroups': [
+                        f"{home_id}-{subgroup_id}" for subgroup_id in room.get('subgroupIDArray', [])
+                    ]
+                }
+        # Update parent rooms for subgroups
+        for room_id, room_info in rooms.items():
+            if not room_info.get("isSubgroup", False) and room_info.get("subgroups"):
+                for subgroup_id in room_info["subgroups"].copy():
+                    subgroup = rooms.get(subgroup_id)
+                    if subgroup:
+                        subgroup["parent_room"] = room_info["name"]
+                    else:
+                        _LOGGER.warning("Subgroup %s not found. Removing from room %s.", subgroup_id, room_id)
+                        room_info["subgroups"].remove(subgroup_id)
+
+
 
 class CyncRoom:
     def __init__(self, room_id: str, room_info: Dict[str, Any], hub) -> None:
