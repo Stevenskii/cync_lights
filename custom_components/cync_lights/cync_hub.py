@@ -193,7 +193,7 @@ class CyncHub:
                 self.logged_in = False
                 raise LostConnection
             while len(data) >= 12:
-                packet_type = int(data[0])
+                packet_type = int(data[0]) >> 4
                 packet_length = struct.unpack(">I", data[1:5])[0]
                 if len(data) < packet_length + 5:
                     # Wait for more data
