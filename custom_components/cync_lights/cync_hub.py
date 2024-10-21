@@ -151,6 +151,9 @@ class CyncHub:
         self.port = data.get("port", DEFAULT_PORT)
         self.login_code = data.get("login_code", b'')
         # SSL context is now set up asynchronously, so it's not initialized here
+        self.use_ssl = options.get("use_ssl", True)
+        
+        # SSL context will be initialized asynchronously
         self.ssl_context: Optional[ssl.SSLContext] = None
 
         self.reader: Optional[asyncio.StreamReader] = None
