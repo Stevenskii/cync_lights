@@ -149,6 +149,7 @@ class CyncHub:
         hass: Any,
         data: Dict[str, Any],
         options: Dict[str, Any],
+        user_data: Any,
     ) -> None:
         """
         Initialize the CyncHub.
