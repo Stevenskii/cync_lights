@@ -24,22 +24,27 @@ async def async_setup_entry(
     """Set up Cync Room Lights from a config entry."""
     hass.data.setdefault(DOMAIN, {})
 
-    # Retrieve configuration data
+    # Retrieve configuration data from entry
     data = entry.data
     options = entry.options
 
-    # Initialize CyncHub with SSL option
+    # Initialize the CyncHub instance
     hub = CyncHub(
         hass=hass,
         data=data,
         options=options
     )
+    
+    # Setup SSL asynchronously (if needed)
+    await hub.setup_ssl_context()
+
+    # Store the hub instance in hass.data for future reference
     hass.data[DOMAIN][entry.entry_id] = hub
 
-    # Forward the entry setups to the platforms
+    # Forward the entry setup to all platforms defined in PLATFORMS
     for platform in PLATFORMS:
         hass.async_create_task(
-            await hass.config_entries.async_forward_entry_setups(entry, platform)
+            hass.config_entries.async_forward_entry_setup(entry, platform)
         )
 
     return True

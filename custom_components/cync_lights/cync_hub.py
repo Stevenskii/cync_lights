@@ -150,7 +150,8 @@ class CyncHub:
         self.host = data.get("host", DEFAULT_HOST)
         self.port = data.get("port", DEFAULT_PORT)
         self.login_code = data.get("login_code", b'')
-        self.use_ssl = options.get("use_ssl", True)  # Default to True
+        # SSL context is now set up asynchronously, so it's not initialized here
+        self.ssl_context: Optional[ssl.SSLContext] = None
 
         self.reader: Optional[asyncio.StreamReader] = None
         self.writer: Optional[asyncio.StreamWriter] = None
@@ -182,11 +183,28 @@ class CyncHub:
         self.client_thread = threading.Thread(target=self.start_client, daemon=True)
         self.client_thread.start()
 
+    async def setup_ssl_context(self) -> None:
+        """
+        Set up SSL context asynchronously.
+        """
+        if self.use_ssl:
+            _LOGGER.debug("Setting up SSL context asynchronously.")
+            self.ssl_context = ssl.create_default_context()
+            await asyncio.sleep(0)  # Yield control to avoid blocking
+            _LOGGER.debug("SSL context setup complete.")
+        else:
+            self.ssl_context = None
+            _LOGGER.debug("SSL is disabled for CyncHub.")
+
     def start_client(self):
-        """Start the asyncio event loop for the TCP client."""
+        """
+        Start the asyncio event loop for the TCP client.
+        """
         try:
             self.loop.run_until_complete(self.connect())
             self.loop.run_until_complete(self.read_tcp_messages())
+        except ShuttingDown:
+            _LOGGER.info("CyncHub is shutting down.")
         except Exception as e:
             _LOGGER.error(f"CyncHub encountered an exception: {e}")
             _LOGGER.debug("Traceback:", exc_info=True)
@@ -197,11 +215,12 @@ class CyncHub:
             self.loop.stop()
 
     async def connect(self):
-        """Establish TCP connection and authenticate."""
-        try:
-            # Move SSL context creation out of the event loop
-            await self.hass.async_add_executor_job(self._create_ssl_context)
+        """
+        Establish TCP connection and authenticate.
+        """
+        await self.setup_ssl_context()  # Setup SSL context asynchronously
 
+        try:
             self.reader, self.writer = await asyncio.open_connection(
                 self.host,
                 self.port,
