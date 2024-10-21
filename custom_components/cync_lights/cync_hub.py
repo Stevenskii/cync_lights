@@ -536,16 +536,6 @@ class CyncHub:
         else:
             _LOGGER.warning(f"No pending command found for sequence {seq_num}.")
 
-    def get_next_seq_num(self) -> int:
-        """
-        Thread-safe method to get the next sequence number.
-        """
-        with self.seq_lock:
-            self.seq_num += 1
-            if self.seq_num > 65535:
-                self.seq_num = 1  # Reset if exceeds max value
-            return self.seq_num
-
     async def send_request(self, packet: Packet, callback: Optional[Callable[[str], None]] = None):
         """
         Send a request packet to the server with an optional callback for acknowledgment.
@@ -553,13 +543,13 @@ class CyncHub:
         if not self.logged_in or not self.writer:
             _LOGGER.error("Cannot send request: Not authenticated or writer not available.")
             return
-
+    
         encoded_packet = packet.encode()
         try:
             self.writer.write(encoded_packet)
             await self.writer.drain()
-            _LOGGER.debug(f"Sent packet: {encoded_packet.hex()}")
-
+            _LOGGER.debug(f"Sent packet: {encoded_packet.hex()} | Packet: {packet}")
+    
             if callback:
                 seq_num = self.extract_seq_num(packet)
                 if seq_num:
@@ -606,6 +596,7 @@ class CyncHub:
         )
         _LOGGER.debug(f"Created Set Status Packet: {packet}")
         return packet
+
 
     def create_set_lum_packet(self, device_id: int, seq: int, device_index: int, brightness: int) -> Packet:
         if brightness < 1 or brightness > 100:
@@ -697,7 +688,7 @@ class CyncHub:
         """
         Send a Set Status command to a device.
         """
-        seq_num = self.get_next_seq_num()
+        seq_num = self.get_seq_num()
         packet = self.create_set_status_packet(device_id, seq_num, device_index, status)
         await self.send_request(packet, callback)
 
@@ -711,7 +702,7 @@ class CyncHub:
         """
         Send a Set Lum command to a device.
         """
-        seq_num = self.get_next_seq_num()
+        seq_num = self.get_seq_num()
         packet = self.create_set_lum_packet(device_id, seq_num, device_index, brightness)
         await self.send_request(packet, callback)
 
@@ -725,7 +716,7 @@ class CyncHub:
         """
         Send a Set CT command to a device.
         """
-        seq_num = self.get_next_seq_num()
+        seq_num = self.get_seq_num()
         packet = self.create_set_ct_packet(device_id, seq_num, device_index, ct)
         await self.send_request(packet, callback)
 
@@ -741,7 +732,7 @@ class CyncHub:
         """
         Send a Set RGB command to a device.
         """
-        seq_num = self.get_next_seq_num()
+        seq_num = self.get_seq_num()
         packet = self.create_set_rgb_packet(device_id, seq_num, device_index, r, g, b)
         await self.send_request(packet, callback)
 
@@ -753,7 +744,7 @@ class CyncHub:
         """
         Send a Get Status Paginated command to a device.
         """
-        seq_num = self.get_next_seq_num()
+        seq_num = self.get_seq_num()
         packet = self.create_get_status_paginated_packet(device_id, seq_num)
         await self.send_request(packet, callback)
 
@@ -871,15 +862,16 @@ class CyncRoom:
         attempts = 0
         update_received = False
         while not update_received and attempts < int(self._command_retry_time / self._command_timeout):
-            seq = str(self.hub.get_seq_num())
+            # Unique sequence numbers for each command
+            seq_status = self.hub.get_seq_num()
             controller = self.controllers[attempts % len(self.controllers)] if self.controllers else self.default_controller
-
+    
             # Handle brightness
             if brightness is not None:
                 brightness_value = brightness
             else:
                 brightness_value = self.brightness if self.brightness else 100  # Default to 100% if no brightness is set
-
+    
             # Handle color temperature
             if color_temp_kelvin is not None:
                 # Calculate color_temp as a percentage
@@ -891,27 +883,35 @@ class CyncRoom:
                 )
             else:
                 color_temp = 50  # Default mid value
-
-            # Send Set Status (On)
-            status_packet = self.hub.create_set_status_packet(controller, seq, device_index=0, status=1)
-            await self.hub.send_request(status_packet)
-
-            # Send Set Brightness
-            brightness_packet = self.hub.create_set_lum_packet(controller, seq, device_index=0, brightness=brightness_value)
-            await self.hub.send_request(brightness_packet)
-
-            # Send Set Color Temperature
+    
+            # Send Set Status (On) with unique seq_num
+            status_packet = self.hub.create_set_status_packet(controller, seq_status, device_index=0, status=1)
+            await self.hub.send_request(status_packet, self.command_received)
+    
+            # Send Set Brightness with unique seq_num
+            seq_brightness = self.hub.get_seq_num()
+            brightness_packet = self.hub.create_set_lum_packet(controller, seq_brightness, device_index=0, brightness=brightness_value)
+            await self.hub.send_request(brightness_packet, self.command_received)
+    
+            # Send Set Color Temperature with unique seq_num
             if self.support_color_temp:
-                color_temp_packet = self.hub.create_set_ct_packet(controller, seq, device_index=0, color_temp=color_temp)
-                await self.hub.send_request(color_temp_packet)
-
-            self.hub.pending_commands[seq] = self.command_received
+                seq_ct = self.hub.get_seq_num()
+                color_temp_packet = self.hub.create_set_ct_packet(controller, seq_ct, device_index=0, color_temp=color_temp)
+                await self.hub.send_request(color_temp_packet, self.command_received)
+    
+            # Wait for all acknowledgments
             await asyncio.sleep(self._command_timeout)
-            if self.hub.pending_commands.get(seq) is not None:
-                self.hub.pending_commands.pop(seq)
-                attempts += 1
-            else:
+    
+            # Check if all commands have been acknowledged
+            if (
+                not self.hub.pending_commands.get(seq_status) and
+                not self.hub.pending_commands.get(seq_brightness) and
+                (not self.support_color_temp or not self.hub.pending_commands.get(seq_ct))
+            ):
                 update_received = True
+            else:
+                attempts += 1
+                _LOGGER.debug(f"Attempt {attempts} to turn on the room lights.")
 
     async def turn_off(self, **kwargs: Any) -> None:
         """Turn off the room lights."""
@@ -1103,13 +1103,13 @@ class CyncSwitch:
         """Turn on the light with optional brightness, color temperature, RGB color, effect, and transition."""
         attempts = 0
         update_received = False
-
+    
         # Convert brightness to percentage if needed
         if brightness is not None:
             brightness_value = max(1, min(100, round((brightness / 255) * 100)))
         else:
             brightness_value = self.brightness if self.brightness else 100  # Default to 100% if no brightness is set
-
+    
         # Handle color temperature
         if color_temp_kelvin is not None:
             color_temp = max(0, min(100, round(
@@ -1120,13 +1120,13 @@ class CyncSwitch:
             )))
         else:
             color_temp = None
-
+    
         # Handle RGB color
         if rgb_color is not None:
             r, g, b = rgb_color
         else:
             r, g, b = self.rgb['r'], self.rgb['g'], self.rgb['b']
-
+    
         # Handle effects
         if effect is not None:
             # Implement effect handling logic here
@@ -1136,46 +1136,59 @@ class CyncSwitch:
             if effect_index is not None:
                 # Send effect command to the device
                 pass  # Placeholder for effect command implementation
-
+    
         # Handle transition
         if transition is not None:
             # Implement transition handling logic here
             self.transition = transition
             # For example, set the transition time for the device
             pass  # Placeholder for transition command implementation
-
+    
         while not update_received and attempts < int(self._command_retry_time / self._command_timeout):
-            seq = self.hub.get_seq_num()
+            # Unique sequence numbers for each command
+            seq_status = self.hub.get_seq_num()
             controller = int(self.controllers[attempts % len(self.controllers)] if self.controllers else self.default_controller)
-
-            # Send Set Status (On)
-            status_packet = self.hub.create_set_status_packet(controller, seq, self.mesh_id_int, 1)
-            await self.hub.send_request(status_packet)
-
-            # Send Set Brightness
+    
+            # Send Set Status (On) with unique seq_num
+            status_packet = self.hub.create_set_status_packet(controller, seq_status, self.mesh_id_int, 1)
+            await self.hub.send_request(status_packet, self.command_received)
+    
+            # Send Set Brightness with unique seq_num
             if self.support_brightness:
-                brightness_packet = self.hub.create_set_lum_packet(controller, seq, self.mesh_id_int, brightness_value)
-                await self.hub.send_request(brightness_packet)
-
-            # Send Set Color Temperature
+                seq_brightness = self.hub.get_seq_num()
+                brightness_packet = self.hub.create_set_lum_packet(controller, seq_brightness, self.mesh_id_int, brightness_value)
+                await self.hub.send_request(brightness_packet, self.command_received)
+    
+            # Send Set Color Temperature with unique seq_num
             if self.support_color_temp and color_temp is not None:
-                color_temp_packet = self.hub.create_set_ct_packet(controller, seq, self.mesh_id_int, color_temp)
-                await self.hub.send_request(color_temp_packet)
-
-            # Send Set RGB
+                seq_ct = self.hub.get_seq_num()
+                color_temp_packet = self.hub.create_set_ct_packet(controller, seq_ct, self.mesh_id_int, color_temp)
+                await self.hub.send_request(color_temp_packet, self.command_received)
+    
+            # Send Set RGB with unique seq_num
             if self.support_rgb and rgb_color is not None:
-                rgb_packet = self.hub.create_set_rgb_packet(controller, seq, self.mesh_id_int, r, g, b)
-                await self.hub.send_request(rgb_packet)
-
+                seq_rgb = self.hub.get_seq_num()
+                rgb_packet = self.hub.create_set_rgb_packet(controller, seq_rgb, self.mesh_id_int, r, g, b)
+                await self.hub.send_request(rgb_packet, self.command_received)
+    
             # Implement effect and transition commands here if applicable
-
-            self.hub.pending_commands[seq] = self.command_received
+    
+            # Wait for all acknowledgments
             await asyncio.sleep(self._command_timeout)
-            if self.hub.pending_commands.get(seq) is not None:
-                self.hub.pending_commands.pop(seq)
-                attempts += 1
-            else:
+    
+            # Check if all commands have been acknowledged
+            pending = [
+                self.hub.pending_commands.get(seq_status),
+                self.hub.pending_commands.get(seq_brightness) if self.support_brightness else None,
+                self.hub.pending_commands.get(seq_ct) if self.support_color_temp else None,
+                self.hub.pending_commands.get(seq_rgb) if self.support_rgb else None
+            ]
+    
+            if not any(pending):
                 update_received = True
+            else:
+                attempts += 1
+                _LOGGER.debug(f"Attempt {attempts} to turn on the switch.")
 
     async def turn_off(self, **kwargs: Any) -> None:
         """Turn off the light."""
