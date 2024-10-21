@@ -102,7 +102,7 @@ class Packet:
         length = len(self.data)
         header = struct.pack(">B I", type_byte, length)
         return header + self.data
-
+    
     @staticmethod
     def decode(raw_data: bytes) -> 'Packet':
         """
@@ -529,12 +529,12 @@ class CyncHub:
             callback = self.pending_commands.pop(seq_num, None)
         if callback:
             try:
-                callback(str(seq_num))
+                callback(seq_num)  # Pass as int
                 _LOGGER.debug(f"Executed callback for sequence {seq_num}")
             except Exception as e:
                 _LOGGER.error(f"Error executing callback for sequence {seq_num}: {e}")
         else:
-            _LOGGER.warning(f"No pending command found for sequence {seq_num}.")
+            _LOGGER.warning(f"No pending command found for sequence {seq_num}.")    
 
     async def send_request(self, packet: Packet, callback: Optional[Callable[[str], None]] = None):
         """
@@ -566,10 +566,10 @@ class CyncHub:
         try:
             if packet.type != PACKET_TYPE_PIPE:
                 return None
-            # Assuming sequence number is at bytes 4-5 of the data
-            if len(packet.data) < 6:
+            # Correctly extract sequence number from bytes 1-2
+            if len(packet.data) < 3:
                 return None
-            seq_num = struct.unpack(">H", packet.data[4:6])[0]
+            seq_num = struct.unpack(">H", packet.data[1:3])[0]
             return seq_num
         except Exception as e:
             _LOGGER.error(f"Error extracting sequence number: {e}")
@@ -861,6 +861,7 @@ class CyncRoom:
         """Turn on the room lights."""
         attempts = 0
         update_received = False
+        seq_ct = None  # Initialize seq_ct to None
         while not update_received and attempts < int(self._command_retry_time / self._command_timeout):
             # Unique sequence numbers for each command
             seq_status = self.hub.get_seq_num()
@@ -933,7 +934,7 @@ class CyncRoom:
             else:
                 update_received = True
 
-    def command_received(self, seq):
+    def command_received(self, seq: int):
         """Handle command acknowledgment from the Cync server."""
         self.hub.pending_commands.pop(seq, None)
 
@@ -1103,6 +1104,7 @@ class CyncSwitch:
         """Turn on the light with optional brightness, color temperature, RGB color, effect, and transition."""
         attempts = 0
         update_received = False
+        seq_ct=None
     
         # Convert brightness to percentage if needed
         if brightness is not None:
@@ -1210,8 +1212,9 @@ class CyncSwitch:
             else:
                 update_received = True
 
-    def command_received(self, seq):
+    def command_received(self, seq: int):
         """Handle command acknowledgment from the Cync server."""
+        _LOGGER.debug(f"Command received for sequence {seq}")
         self.hub.pending_commands.pop(seq, None)
 
     def update_switch(self, state, brightness, color_temp=None, rgb=None):
