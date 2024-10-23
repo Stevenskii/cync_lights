@@ -416,129 +416,129 @@ class CyncHub:
             _LOGGER.debug("Received Pipe Sync request packet.")
             # Implement Pipe Sync request handling if necessary
 
-async def handle_pipe_set_status(self, is_response: bool, payload: bytes):
-    """
-    Handle Set Status pipe packets.
-    """
-    if is_response:
-        if len(payload) < 6:
-            _LOGGER.error("Set Status acknowledgment packet too short.")
-            return
-        seq_num = struct.unpack(">H", payload[4:6])[0]
-        _LOGGER.debug(f"Received Set Status acknowledgment for sequence {seq_num}")
-        self.execute_callback(seq_num)
-    else:
-        _LOGGER.debug("Received Set Status request packet.")
-        # Implement Set Status request handling if necessary
-
-
-async def handle_pipe_set_lum(self, is_response: bool, payload: bytes):
-    """
-    Handle Set Lum pipe packets.
-    """
-    if is_response:
-        if len(payload) < 6:
-            _LOGGER.error("Set Lum acknowledgment packet too short.")
-            return
-        seq_num = struct.unpack(">H", payload[4:6])[0]
-        _LOGGER.debug(f"Received Set Lum acknowledgment for sequence {seq_num}")
-        self.execute_callback(seq_num)
-    else:
-        _LOGGER.debug("Received Set Lum request packet.")
-        # Implement Set Lum request handling if necessary
-
-
-async def handle_pipe_set_ct(self, is_response: bool, payload: bytes):
-    """
-    Handle Set CT pipe packets.
-    """
-    if is_response:
-        if len(payload) < 6:
-            _LOGGER.error("Set CT acknowledgment packet too short.")
-            return
-        seq_num = struct.unpack(">H", payload[4:6])[0]
-        _LOGGER.debug(f"Received Set CT acknowledgment for sequence {seq_num}")
-        self.execute_callback(seq_num)
-    else:
-        _LOGGER.debug("Received Set CT request packet.")
-        # Implement Set CT request handling if necessary
-
-
-async def handle_pipe_get_status_paginated(self, is_response: bool, payload: bytes):
-    """
-    Handle Get Status Paginated pipe packets.
-    """
-    if is_response:
-        _LOGGER.debug("Received Get Status Paginated response packet.")
-        responses = self.parse_status_paginated_response(payload)
-        for response in responses:
-            _LOGGER.debug(f"Device {response.device} - Status: {'On' if response.is_on else 'Off'}, "
-                          f"Brightness: {response.brightness}, CT: {response.ct}, RGB: {response.rgb}")
-            # Update device states in Home Assistant accordingly
-            # This requires integration with Home Assistant's state management
-    else:
-        _LOGGER.debug("Received Get Status Paginated request packet.")
-        # Implement Get Status Paginated request handling if necessary
-
-
-    def parse_status_paginated_response(self, payload: bytes) -> List[StatusPaginatedResponse]:
+    async def handle_pipe_set_status(self, is_response: bool, payload: bytes):
         """
-        Parse the Status Paginated Response payload.
+        Handle Set Status pipe packets.
         """
-        responses = []
-        try:
-            # Example parsing logic based on Go project's DecodeStatusPaginatedResponse
-            # Adjust byte offsets as per actual protocol specifications
-            # Assuming:
-            # Byte 1: Device
-            # Byte 9: IsOn
-            # Byte 13: Brightness
-            # Byte 17: CT (Color Tone)
-            # Byte 21-23: RGB
-
-            if len(payload) < 24:
-                _LOGGER.error("Status Paginated Response payload too short.")
-                return responses
-
-            while len(payload) >= 24:
-                device = payload[1]
-                is_on = payload[9] != 0
-                brightness = payload[13]
-                ct = payload[17]
-                use_rgb = payload[17] == 0xfe
-                rgb = (payload[21], payload[22], payload[23]) if use_rgb else (0, 0, 0)
-
-                response = StatusPaginatedResponse(
-                    device=device,
-                    brightness=brightness,
-                    ct=ct,
-                    is_on=is_on,
-                    use_rgb=use_rgb,
-                    rgb=rgb
-                )
-                responses.append(response)
-                _LOGGER.debug(f"Parsed StatusPaginatedResponse: {response}")
-
-                payload = payload[24:]
-        except Exception as e:
-            _LOGGER.error(f"Error parsing Status Paginated Response: {e}")
-            _LOGGER.debug("Payload:", exc_info=True)
-        return responses
-
-    def execute_callback(self, seq_num: int):
-        """
-        Execute the callback associated with a sequence number.
-        """
-        with self.pending_commands_lock:
-            callback = self.pending_commands.pop(seq_num, None)
-        if callback:
-            try:
-                callback(seq_num)  # Pass as int
-                _LOGGER.debug(f"Executed callback for sequence {seq_num}")
-            except Exception as e:
-                _LOGGER.error(f"Error executing callback for sequence {seq_num}: {e}")
+        if is_response:
+            if len(payload) < 6:
+                _LOGGER.error("Set Status acknowledgment packet too short.")
+                return
+            seq_num = struct.unpack(">H", payload[4:6])[0]
+            _LOGGER.debug(f"Received Set Status acknowledgment for sequence {seq_num}")
+            self.execute_callback(seq_num)
         else:
-            _LOGGER.warning(f"No pending command found for sequence {seq_num}.")    
+            _LOGGER.debug("Received Set Status request packet.")
+            # Implement Set Status request handling if necessary
+    
+    
+    async def handle_pipe_set_lum(self, is_response: bool, payload: bytes):
+        """
+        Handle Set Lum pipe packets.
+        """
+        if is_response:
+            if len(payload) < 6:
+                _LOGGER.error("Set Lum acknowledgment packet too short.")
+                return
+            seq_num = struct.unpack(">H", payload[4:6])[0]
+            _LOGGER.debug(f"Received Set Lum acknowledgment for sequence {seq_num}")
+            self.execute_callback(seq_num)
+        else:
+            _LOGGER.debug("Received Set Lum request packet.")
+            # Implement Set Lum request handling if necessary
+    
+    
+    async def handle_pipe_set_ct(self, is_response: bool, payload: bytes):
+        """
+        Handle Set CT pipe packets.
+        """
+        if is_response:
+            if len(payload) < 6:
+                _LOGGER.error("Set CT acknowledgment packet too short.")
+                return
+            seq_num = struct.unpack(">H", payload[4:6])[0]
+            _LOGGER.debug(f"Received Set CT acknowledgment for sequence {seq_num}")
+            self.execute_callback(seq_num)
+        else:
+            _LOGGER.debug("Received Set CT request packet.")
+            # Implement Set CT request handling if necessary
+    
+    
+    async def handle_pipe_get_status_paginated(self, is_response: bool, payload: bytes):
+        """
+        Handle Get Status Paginated pipe packets.
+        """
+        if is_response:
+            _LOGGER.debug("Received Get Status Paginated response packet.")
+            responses = self.parse_status_paginated_response(payload)
+            for response in responses:
+                _LOGGER.debug(f"Device {response.device} - Status: {'On' if response.is_on else 'Off'}, "
+                            f"Brightness: {response.brightness}, CT: {response.ct}, RGB: {response.rgb}")
+                # Update device states in Home Assistant accordingly
+                # This requires integration with Home Assistant's state management
+        else:
+            _LOGGER.debug("Received Get Status Paginated request packet.")
+            # Implement Get Status Paginated request handling if necessary
+    
+    
+        def parse_status_paginated_response(self, payload: bytes) -> List[StatusPaginatedResponse]:
+            """
+            Parse the Status Paginated Response payload.
+            """
+            responses = []
+            try:
+                # Example parsing logic based on Go project's DecodeStatusPaginatedResponse
+                # Adjust byte offsets as per actual protocol specifications
+                # Assuming:
+                # Byte 1: Device
+                # Byte 9: IsOn
+                # Byte 13: Brightness
+                # Byte 17: CT (Color Tone)
+                # Byte 21-23: RGB
+    
+                if len(payload) < 24:
+                    _LOGGER.error("Status Paginated Response payload too short.")
+                    return responses
+    
+                while len(payload) >= 24:
+                    device = payload[1]
+                    is_on = payload[9] != 0
+                    brightness = payload[13]
+                    ct = payload[17]
+                    use_rgb = payload[17] == 0xfe
+                    rgb = (payload[21], payload[22], payload[23]) if use_rgb else (0, 0, 0)
+    
+                    response = StatusPaginatedResponse(
+                        device=device,
+                        brightness=brightness,
+                        ct=ct,
+                        is_on=is_on,
+                        use_rgb=use_rgb,
+                        rgb=rgb
+                    )
+                    responses.append(response)
+                    _LOGGER.debug(f"Parsed StatusPaginatedResponse: {response}")
+    
+                    payload = payload[24:]
+            except Exception as e:
+                _LOGGER.error(f"Error parsing Status Paginated Response: {e}")
+                _LOGGER.debug("Payload:", exc_info=True)
+            return responses
+    
+        def execute_callback(self, seq_num: int):
+            """
+            Execute the callback associated with a sequence number.
+            """
+            with self.pending_commands_lock:
+                callback = self.pending_commands.pop(seq_num, None)
+            if callback:
+                try:
+                    callback(seq_num)  # Pass as int
+                    _LOGGER.debug(f"Executed callback for sequence {seq_num}")
+                except Exception as e:
+                    _LOGGER.error(f"Error executing callback for sequence {seq_num}: {e}")
+            else:
+                _LOGGER.warning(f"No pending command found for sequence {seq_num}.")    
 
     async def send_request(self, packet: Packet, callback: Optional[Callable[[int], None]] = None):
         """
