@@ -68,25 +68,24 @@ class ShuttingDown(Exception):
 class InvalidCyncConfiguration(Exception):
     """Cync configuration is not supported"""
 
-# Packet types
+# Packet types (from cync-lan)
 PACKET_TYPE_AUTH = 1
 PACKET_TYPE_SYNC = 4
 PACKET_TYPE_PIPE = 7
 PACKET_TYPE_PIPE_SYNC = 8
+PACKET_TYPE_REQUEST = 0x73  # Status and brightness request
+PACKET_TYPE_PING = 0xD3  # Heartbeat/Ping packet type
 
-# Add this line:
-PACKET_TYPE_REQUEST = 0x73
+# Pipe types (from cync-lan)
+PACKET_PIPE_TYPE_SET_STATUS = 0xD0  # Set status (on/off)
+PACKET_PIPE_TYPE_SET_LUM = 0xD2  # Set brightness
+PACKET_PIPE_TYPE_SET_CT = 0xE2  # Set color temperature
+PACKET_PIPE_TYPE_SET_RGB = 0xD4  # Set RGB color
 
-# Pipe subtypes
-PACKET_PIPE_TYPE_SET_STATUS = 0xd0
-PACKET_PIPE_TYPE_SET_LUM = 0xd2
-PACKET_PIPE_TYPE_SET_CT = 0xe2
-PACKET_PIPE_TYPE_GET_STATUS = 0xdb
-PACKET_PIPE_TYPE_GET_STATUS_PAGINATED = 0x52
-# Pipe subtypes for acknowledgments
-PACKET_PIPE_SUBTYPE_ACK_SET_STATUS = 17
-PACKET_PIPE_SUBTYPE_ACK_SET_LUM = 18
-PACKET_PIPE_SUBTYPE_ACK_SET_CT = 37
+# Pipe subtypes for acknowledgments (from cync-lan)
+PACKET_PIPE_SUBTYPE_ACK_SET_STATUS = 17  # Acknowledgment for setting status
+PACKET_PIPE_SUBTYPE_ACK_SET_LUM = 18  # Acknowledgment for setting brightness
+PACKET_PIPE_SUBTYPE_ACK_SET_CT = 37  # Acknowledgment for setting color temperature
 
 # Constants
 DEFAULT_TIMEOUT = 10  # seconds
@@ -100,21 +99,17 @@ class Packet:
         self.data = data
 
     def encode(self) -> bytes:
-        """
-        Encode the packet into raw binary form.
-        """
+        """Encode the packet into raw binary form."""
         type_byte = (self.type << 4) | 3  # Assuming version 3
         if self.is_response:
             type_byte |= 8
         length = len(self.data)
         header = struct.pack(">B I", type_byte, length)
         return header + self.data
-    
+
     @staticmethod
     def decode(raw_data: bytes) -> 'Packet':
-        """
-        Decode raw binary data into a Packet object.
-        """
+        """Decode raw binary data into a Packet object."""
         if len(raw_data) < 5:
             raise ValueError("Insufficient data for header")
         type_byte = raw_data[0]
@@ -129,873 +124,241 @@ class Packet:
     def __str__(self):
         return f"Packet(type={self.type}, response={self.is_response}, data={self.data.hex()})"
 
-class StatusPaginatedResponse:
-    def __init__(self, device: int, brightness: int, ct: int, is_on: bool, use_rgb: bool, rgb: Tuple[int, int, int]):
-        self.device = device
-        self.brightness = brightness
-        self.ct = ct
-        self.is_on = is_on
-        self.use_rgb = use_rgb
-        self.rgb = rgb
-
-    def __repr__(self):
-        return (f"StatusPaginatedResponse(device={self.device}, brightness={self.brightness}, "
-                f"ct={self.ct}, is_on={self.is_on}, use_rgb={self.use_rgb}, rgb={self.rgb})")
 
 class CyncHub:
-    def __init__(
-        self,
-        hass: Any,
-        data: Dict[str, Any],
-        options: Dict[str, Any],
-    ) -> None:
-        """
-        Initialize the CyncHub.
-        """
+    def __init__(self, hass: Any, data: Dict[str, Any], options: Dict[str, Any]):
+        """Initialize the CyncHub."""
         self.hass = hass
         self.host = data.get("host", DEFAULT_HOST)
         self.port = data.get("port", DEFAULT_PORT)
         self.login_code = bytearray(data['cync_credentials'])
         self.use_ssl = options.get("use_ssl", True)
+        self.ssl_context = None
+        self.reader, self.writer, self.logged_in, self.shutting_down = None, None, False, False
 
-        # Initialize device attributes
         self.home_devices = data['cync_config']['home_devices']
         self.home_controllers = data['cync_config']['home_controllers']
         self.switchID_to_homeID = data['cync_config']['switchID_to_homeID']
         self.connected_devices = {home_id: [] for home_id in self.home_controllers.keys()}
-        self.shutting_down = False
         self.cync_rooms = {room_id: CyncRoom(room_id, room_info, self) for room_id, room_info in data['cync_config']['rooms'].items()}
-        self.cync_switches = {
-            device_id: CyncSwitch(device_id, switch_info, self.cync_rooms.get(switch_info['room'], None), self)
-            for device_id, switch_info in data['cync_config']['devices'].items() if switch_info.get("ONOFF", False)
-        }
-        self.cync_motion_sensors = {
-            device_id: CyncMotionSensor(device_id, device_info, self.cync_rooms.get(device_info['room'], None))
-            for device_id, device_info in data['cync_config']['devices'].items() if device_info.get("MOTION", False)
-        }
-        self.cync_ambient_light_sensors = {
-            device_id: CyncAmbientLightSensor(device_id, device_info, self.cync_rooms.get(device_info['room'], None))
-            for device_id, device_info in data['cync_config']['devices'].items() if device_info.get("AMBIENT_LIGHT", False)
-        }
-        self.switchID_to_deviceIDs = {
-            device_info.switch_id: [dev_id for dev_id, dev_info in self.cync_switches.items() if dev_info.switch_id == device_info.switch_id]
-            for device_id, device_info in self.cync_switches.items() if int(device_info.switch_id) > 0
-        }
-        self.connected_devices_updated = False
-        self.effect_mapping = self._parse_light_shows(data['cync_config'])
-        [room.initialize() for room in self.cync_rooms.values() if room.is_subgroup]
-        [room.initialize() for room in self.cync_rooms.values() if not room.is_subgroup]
-
-        self.ssl_context: Optional[ssl.SSLContext] = None
-        self.reader: Optional[asyncio.StreamReader] = None
-        self.writer: Optional[asyncio.StreamWriter] = None
-        self.logged_in = False
-        self.shutting_down = False
-
-        self.buffer = b''
-        self.packet_handlers: Dict[int, Callable[[bool, bytes], asyncio.Future]] = {}
+        self.cync_switches = {device_id: CyncSwitch(device_id, switch_info, self.cync_rooms.get(switch_info['room']), self)
+                              for device_id, switch_info in data['cync_config']['devices'].items() if switch_info.get("ONOFF", False)}
 
         self.seq_num = 0
         self.seq_lock = threading.Lock()
-
-        self.pending_commands: Dict[int, Dict[str, Any]] = {}
+        self.pending_commands = {}
         self.pending_commands_lock = threading.Lock()
-        [room.initialize() for room in self.cync_rooms.values() if room.is_subgroup]
-        [room.initialize() for room in self.cync_rooms.values() if not room.is_subgroup]
-    
-        # Schedule the connect method
+
+        self.buffer = b''  # Buffer for reading TCP data
+
+        self.effect_mapping = self._parse_light_shows(data['cync_config'])  # Re-added light show parsing
         self.hass.loop.create_task(self.connect())
 
-    def get_seq_num(self):
+    def get_seq_num(self) -> int:
         """Thread-safe method to get the next sequence number."""
         with self.seq_lock:
-            self.seq_num += 1
-            if self.seq_num > 65535:
-                self.seq_num = 1  # Reset if exceeds max value
+            self.seq_num = (self.seq_num + 1) % 65536
             return self.seq_num
 
-    def _parse_light_shows(self, cync_config):
+    def _parse_light_shows(self, cync_config) -> Dict[str, Any]:
         """Parse lightShows data from cync_config and create a mapping."""
         effect_mapping = {}
-        homes = cync_config.get('homes', {})
-        for home_id, home_info in homes.items():
-            light_shows = home_info.get('lightShows', [])
-            for show in light_shows:
-                effect_name = show['name']
-                effect_index = show['index']
-                effect_mapping[effect_name] = show
+        for home_info in cync_config.get('homes', {}).values():
+            for show in home_info.get('lightShows', []):
+                effect_mapping[show['name']] = show
         return effect_mapping
 
     async def setup_ssl_context(self) -> None:
-        """
-        Set up SSL context asynchronously using Home Assistant's async_add_executor_job.
-        """
+        """Set up SSL context asynchronously."""
         if self.use_ssl:
-            _LOGGER.debug("Setting up SSL context asynchronously.")
             self.ssl_context = await self.hass.async_add_executor_job(ssl.create_default_context)
-            _LOGGER.debug("SSL context setup complete.")
         else:
             self.ssl_context = None
-            _LOGGER.debug("SSL is disabled for CyncHub.")
 
-    async def connect(self):
-        """
-        Establish TCP connection and authenticate, with retries and task management.
-        """
-        _LOGGER.debug("CyncHub connect() method called.")
+    async def connect(self) -> None:
+        """Establish TCP connection and authenticate."""
         while not self.shutting_down:
             try:
-                await self.setup_ssl_context()  # Setup SSL context asynchronously
-                
-                # Attempt to establish a secure connection
-                try:
-                    _LOGGER.debug("Trying to establish SSL connection on port 23779.")
-                    self.reader, self.writer = await asyncio.open_connection(self.host, self.port, ssl=self.ssl_context)
-                except Exception:
-                    _LOGGER.warning("SSL connection failed. Retrying with SSL context check disabled.")
-                    if self.ssl_context:
-                        self.ssl_context.check_hostname = False
-                        self.ssl_context.verify_mode = ssl.CERT_NONE
-                    try:
-                        self.reader, self.writer = await asyncio.open_connection(self.host, self.port, ssl=self.ssl_context)
-                    except Exception:
-                        _LOGGER.warning("SSL context failed. Falling back to unsecured connection.")
-                        self.reader, self.writer = await asyncio.open_connection(self.host, 23778)
-                
-                _LOGGER.debug("TCP connection established.")
-    
-                # Send login code
+                await self.setup_ssl_context()
+                self.reader, self.writer = await asyncio.open_connection(self.host, self.port, ssl=self.ssl_context)
+                _LOGGER.debug(f"TCP connection established at {self.host}:{self.port}")
+
                 self.writer.write(self.login_code)
                 await self.writer.drain()
-                _LOGGER.debug(f"Sent login code: {self.login_code.hex()}")
-    
-                # Await login response
                 login_response = await self.reader.read(1000)
-                _LOGGER.debug(f"Login response: {login_response.hex()}")
-    
-                if not login_response:
-                    _LOGGER.error("Authentication failed: no response from server")
-                    raise Exception("Authentication failed: no response from server")
-    
-                # Process login response
-                if login_response.startswith(b'\x18\x00\x00\x00\x02\x00\x00'):
-                    self.logged_in = True
-                    _LOGGER.info("Successfully authenticated with the server.")
-                else:
-                    _LOGGER.error(f"Authentication failed with response data: {login_response.hex()}")
-                    raise Exception("Authentication failed with response data.")
-    
-                # Create tasks for handling TCP messages and other maintenance tasks
-                read_tcp_messages = asyncio.create_task(self.read_tcp_messages(), name="Read TCP Messages")
-                # Additional tasks can be added here if needed
-    
-                # Wait for the read_tcp_messages task to complete
-                await read_tcp_messages
-    
-            except Exception as e:
-                _LOGGER.error(f"Exception in connect(): {type(e).__name__}: {e}")
-                _LOGGER.debug("Traceback:", exc_info=True)
-                await asyncio.sleep(5)  # Retry connection after a delay if an error occurs
 
-    async def read_tcp_messages(self):
-        """
-        Continuously read and process TCP messages from the server.
-        """
+                if not login_response.startswith(b'\x18\x00\x00\x00\x02\x00\x00'):
+                    raise Exception("Authentication failed")
+
+                self.logged_in = True
+                _LOGGER.info("Successfully authenticated with the server.")
+                await self.read_tcp_messages()
+            except Exception as e:
+                _LOGGER.error(f"Connection error: {e}")
+                await asyncio.sleep(5)
+
+    async def read_tcp_messages(self) -> None:
+        """Continuously read and process TCP messages from the server."""
         while not self.shutting_down:
             try:
                 data = await self.reader.read(1024)
                 if not data:
-                    _LOGGER.error("Connection closed by the server.")
-                    self.logged_in = False
-                    raise LostConnection
+                    raise LostConnection("Connection closed by server")
+
                 self.buffer += data
-                _LOGGER.debug(f"Received raw data: {data.hex()}")
-
-                while True:
-                    if len(self.buffer) < 5:
-                        break  # Not enough data for header
-                    # Peek at the header
+                while len(self.buffer) >= 5:
                     header = self.buffer[:5]
-                    type_byte = header[0]
-                    packet_type = type_byte >> 4
-                    is_response = (type_byte & 8) != 0
+                    packet_type, is_response = header[0] >> 4, (header[0] & 8) != 0
                     packet_length = struct.unpack(">I", header[1:5])[0]
-                    _LOGGER.debug(f"Packet Type: {packet_type}, Is Response: {is_response}, Packet Length: {packet_length}")
-
-                    if packet_length == 0:
-                        _LOGGER.warning(f"Received packet with length 0. Skipping byte: {self.buffer[0]:02X}")
-                        self.buffer = self.buffer[1:]
-                        continue
-
                     if len(self.buffer) < 5 + packet_length:
-                        break  # Wait for the full packet
-
+                        break
                     packet_data = self.buffer[5:5 + packet_length]
                     self.buffer = self.buffer[5 + packet_length:]
-                    _LOGGER.debug(f"Packet Content: {packet_data.hex()}")
-
-                    # Handle the packet
                     await self.handle_packet(packet_type, is_response, packet_data)
-
             except LostConnection:
-                _LOGGER.error("Lost connection to Cync server.")
                 break
             except Exception as e:
-                _LOGGER.error(f"Exception in read_tcp_messages: {e}")
-                _LOGGER.debug("Traceback:", exc_info=True)
-                await asyncio.sleep(5)  # Wait before retrying
+                _LOGGER.error(f"Error while reading TCP messages: {e}")
+                await asyncio.sleep(5)
 
-        raise ShuttingDown
-
-    async def handle_packet(self, packet_type: int, is_response: bool, data: bytes):
-        """
-        Dispatch packet to the appropriate handler based on packet_type.
-        """
+    async def handle_packet(self, packet_type: int, is_response: bool, data: bytes) -> None:
+        """Handle packet based on type."""
         try:
-            if packet_type == PACKET_TYPE_AUTH:
-                await self.handle_packet_type_auth(is_response, data)
-            elif packet_type == PACKET_TYPE_SYNC:
-                await self.handle_packet_type_sync(is_response, data)
-            elif packet_type == PACKET_TYPE_PIPE:
-                await self.handle_packet_type_pipe(is_response, data)
-            elif packet_type == PACKET_TYPE_PIPE_SYNC:
-                await self.handle_packet_type_pipe_sync(is_response, data)
+            if packet_type == PACKET_TYPE_PIPE:
+                await self.process_pipe_packet(is_response, data)
             else:
-                _LOGGER.warning(f"Unhandled packet type: {packet_type}, Length: {len(data)}")
+                _LOGGER.warning(f"Unhandled packet type: {packet_type}")
         except Exception as e:
-            _LOGGER.error(f"Error handling packet type {packet_type}: {e}")
-            _LOGGER.debug("Traceback:", exc_info=True)
+            _LOGGER.error(f"Error handling packet: {e}")
 
-    async def handle_packet_type_auth(self, is_response: bool, data: bytes):
-        """
-        Handle authentication response packets.
-        """
+    async def process_pipe_packet(self, is_response: bool, data: bytes) -> None:
+        """Process PIPE packets."""
         if is_response:
-            if data.startswith(b'\x00\x00'):
-                _LOGGER.info("Authentication acknowledged by server.")
+            if len(data) >= 6:
+                seq_num = struct.unpack(">H", data[4:6])[0]
+                _LOGGER.debug(f"Acknowledgment received for sequence {seq_num}")
+                self.execute_callback(seq_num)
             else:
-                _LOGGER.error(f"Authentication failed with response data: {data.hex()}")
+                _LOGGER.error("Invalid acknowledgment packet")
         else:
-            _LOGGER.warning("Received unexpected Auth packet as a request.")
+            _LOGGER.warning("Unhandled PIPE request received")
 
-    async def handle_packet_type_sync(self, is_response: bool, data: bytes):
-        """
-        Handle sync packets.
-        """
-        if is_response:
-            _LOGGER.debug("Received Sync response packet.")
-            # Implement sync response handling if necessary
-        else:
-            _LOGGER.debug("Received Sync request packet.")
-            # Implement sync request handling if necessary
-
-    async def handle_packet_type_pipe(self, is_response: bool, data: bytes):
-        """
-        Handle pipe packets based on their subtype.
-        """
-        if not data:
-            _LOGGER.warning("Received empty Pipe packet.")
-            return
-    
-        subtype = data[0]
-        payload = data[1:]
-        _LOGGER.debug(f"Pipe Subtype: {subtype}, Payload Length: {len(payload)}")
-    
-        if subtype == PACKET_PIPE_TYPE_SET_STATUS:
-            await self.handle_pipe_set_status(is_response, payload)
-        elif subtype == PACKET_PIPE_TYPE_SET_LUM:
-            await self.handle_pipe_set_lum(is_response, payload)
-        elif subtype == PACKET_PIPE_TYPE_SET_CT:
-            await self.handle_pipe_set_ct(is_response, payload)
-        elif subtype == PACKET_PIPE_TYPE_GET_STATUS_PAGINATED:
-            await self.handle_pipe_get_status_paginated(is_response, payload)
-        elif subtype == PACKET_PIPE_SUBTYPE_ACK_SET_STATUS:
-            await self.handle_pipe_subtype_17(is_response, payload)
-        elif subtype == PACKET_PIPE_SUBTYPE_ACK_SET_LUM:
-            await self.handle_pipe_subtype_18(is_response, payload)
-        elif subtype == PACKET_PIPE_SUBTYPE_ACK_SET_CT:
-            await self.handle_pipe_subtype_37(is_response, payload)
-        else:
-            _LOGGER.warning(f"Unhandled Pipe subtype: {subtype}")
-
-    async def handle_packet_type_pipe_sync(self, is_response: bool, data: bytes):
-        """
-        Handle Pipe Sync packets.
-        """
-        if is_response:
-            _LOGGER.debug("Received Pipe Sync response packet.")
-            # Implement Pipe Sync response handling if necessary
-        else:
-            _LOGGER.debug("Received Pipe Sync request packet.")
-            # Implement Pipe Sync request handling if necessary
-
-    async def handle_pipe_set_status(self, is_response: bool, payload: bytes):
-        """
-        Handle Set Status pipe packets.
-        """
-        if is_response:
-            if len(payload) < 6:
-                _LOGGER.error("Set Status acknowledgment packet too short.")
-                return
-            seq_num = struct.unpack(">H", payload[4:6])[0]
-            _LOGGER.debug(f"Received Set Status acknowledgment for sequence {seq_num}")
-            self.execute_callback(seq_num)
-        else:
-            _LOGGER.debug("Received Set Status request packet.")
-            # Implement Set Status request handling if necessary
-    
-    
-    async def handle_pipe_set_lum(self, is_response: bool, payload: bytes):
-        """
-        Handle Set Lum pipe packets.
-        """
-        if is_response:
-            if len(payload) < 6:
-                _LOGGER.error("Set Lum acknowledgment packet too short.")
-                return
-            seq_num = struct.unpack(">H", payload[4:6])[0]
-            _LOGGER.debug(f"Received Set Lum acknowledgment for sequence {seq_num}")
-            self.execute_callback(seq_num)
-        else:
-            _LOGGER.debug("Received Set Lum request packet.")
-            # Implement Set Lum request handling if necessary
-    
-    
-    async def handle_pipe_set_ct(self, is_response: bool, payload: bytes):
-        """
-        Handle Set CT pipe packets.
-        """
-        if is_response:
-            if len(payload) < 6:
-                _LOGGER.error("Set CT acknowledgment packet too short.")
-                return
-            seq_num = struct.unpack(">H", payload[4:6])[0]
-            _LOGGER.debug(f"Received Set CT acknowledgment for sequence {seq_num}")
-            self.execute_callback(seq_num)
-        else:
-            _LOGGER.debug("Received Set CT request packet.")
-            # Implement Set CT request handling if necessary
-
-    async def handle_pipe_subtype_17(self, is_response: bool, payload: bytes):
-        """
-        Handle Pipe Subtype 17: Acknowledgment for Set Status.
-        """
-        if is_response:
-            if len(payload) >= 6:
-                seq_num = struct.unpack(">H", payload[4:6])[0]
-                _LOGGER.debug(f"Received Pipe subtype 17 acknowledgment for sequence {seq_num}")
-                await self.process_acknowledgment(seq_num, action='turn_on_or_off')
-            else:
-                _LOGGER.warning("Pipe subtype 17 payload too short.")
-        else:
-            _LOGGER.warning("Received unexpected Pipe subtype 17 as a request.")
-
-    async def handle_pipe_subtype_18(self, is_response: bool, payload: bytes):
-        """
-        Handle Pipe Subtype 18: Acknowledgment for Set Luminosity.
-        """
-        if is_response:
-            if len(payload) >= 6:
-                seq_num = struct.unpack(">H", payload[4:6])[0]
-                _LOGGER.debug(f"Received Pipe subtype 18 acknowledgment for sequence {seq_num}")
-                await self.process_acknowledgment(seq_num, action='set_brightness')
-            else:
-                _LOGGER.warning("Pipe subtype 18 payload too short.")
-        else:
-            _LOGGER.warning("Received unexpected Pipe subtype 18 as a request.")
-    
-    async def handle_pipe_subtype_37(self, is_response: bool, payload: bytes):
-        """
-        Handle Pipe Subtype 37: Acknowledgment for Set Color Temperature.
-        """
-        if is_response:
-            if len(payload) >= 6:
-                seq_num = struct.unpack(">H", payload[4:6])[0]
-                _LOGGER.debug(f"Received Pipe subtype 37 acknowledgment for sequence {seq_num}")
-                await self.process_acknowledgment(seq_num, action='set_color_temp')
-            else:
-                _LOGGER.warning("Pipe subtype 37 payload too short.")
-        else:
-            _LOGGER.warning("Received unexpected Pipe subtype 37 as a request.")
-
-    async def process_acknowledgment(self, ack_seq_num: int, action: str):
-        """
-        Process the acknowledgment for a given ack_seq_num and action.
-        """
-        with self.pending_commands_lock:
-            command_info = self.pending_commands.pop(ack_seq_num, None)
-
-        if command_info:
-            callback = command_info['callback']
-            device = command_info['device']
-            _LOGGER.debug(f"Executing callback for ack_seq_num {ack_seq_num} on device {device.device_id} for action '{action}'")
-            try:
-                # Invoke the callback
-                if callback:
-                    callback(ack_seq_num)
-
-                # Update device state based on action
-                if action == 'turn_on_or_off':
-                    desired_state = command_info.get('desired_state', False)
-                    device.update_switch(state=desired_state, brightness=device.brightness, color_temp=device.color_temp_kelvin, rgb=device.rgb)
-                elif action == 'set_brightness':
-                    brightness = command_info.get('brightness')
-                    device.update_switch(state=device.power_state, brightness=brightness, color_temp=device.color_temp_kelvin, rgb=device.rgb)
-                elif action == 'set_color_temp':
-                    color_temp_kelvin = command_info.get('color_temp_kelvin')
-                    device.update_switch(state=device.power_state, brightness=device.brightness, color_temp_kelvin=color_temp_kelvin, rgb=device.rgb)
-                else:
-                    _LOGGER.warning(f"Unknown action '{action}' for device {device.device_id}")
-
-                # Notify Home Assistant of the state change asynchronously
-                if device:
-                    asyncio.run_coroutine_threadsafe(device.publish_update(), self.hass.loop)
-            except Exception as e:
-                _LOGGER.error(f"Error executing callback for ack_seq_num {ack_seq_num}: {e}")
-        else:
-            _LOGGER.warning(f"No pending command found for ack_seq_num {ack_seq_num}.")
-
-
-    async def handle_pipe_get_status_paginated(self, is_response: bool, payload: bytes):
-        """
-        Handle Get Status Paginated pipe packets.
-        """
-        if is_response:
-            _LOGGER.debug("Received Get Status Paginated response packet.")
-            responses = self.parse_status_paginated_response(payload)
-            for response in responses:
-                _LOGGER.debug(f"Device {response.device} - Status: {'On' if response.is_on else 'Off'}, "
-                            f"Brightness: {response.brightness}, CT: {response.ct}, RGB: {response.rgb}")
-                # Update device states in Home Assistant accordingly
-                # This requires integration with Home Assistant's state management
-        else:
-            _LOGGER.debug("Received Get Status Paginated request packet.")
-            # Implement Get Status Paginated request handling if necessary
-    
-    
-    def parse_status_paginated_response(self, payload: bytes) -> List[StatusPaginatedResponse]:
-        """
-        Parse the Status Paginated Response payload.
-        """
-        responses = []
-        try:
-            # Example parsing logic based on Go project's DecodeStatusPaginatedResponse
-            # Adjust byte offsets as per actual protocol specifications
-            # Assuming:
-            # Byte 1: Device
-            # Byte 9: IsOn
-            # Byte 13: Brightness
-            # Byte 17: CT (Color Tone)
-            # Byte 21-23: RGB
-    
-            if len(payload) < 24:
-                _LOGGER.error("Status Paginated Response payload too short.")
-                return responses
-    
-            while len(payload) >= 24:
-                device = payload[1]
-                is_on = payload[9] != 0
-                brightness = payload[13]
-                ct = payload[17]
-                use_rgb = payload[17] == 0xfe
-                rgb = (payload[21], payload[22], payload[23]) if use_rgb else (0, 0, 0)
-    
-                response = StatusPaginatedResponse(
-                    device=device,
-                    brightness=brightness,
-                    ct=ct,
-                    is_on=is_on,
-                    use_rgb=use_rgb,
-                    rgb=rgb
-                )
-                responses.append(response)
-                _LOGGER.debug(f"Parsed StatusPaginatedResponse: {response}")
-    
-                payload = payload[24:]
-        except Exception as e:
-            _LOGGER.error(f"Error parsing Status Paginated Response: {e}")
-            _LOGGER.debug("Payload:", exc_info=True)
-        return responses
-    
-    def execute_callback(self, seq_num: int):
-        """
-        Execute the callback associated with a sequence number.
-        Also, update the device state based on the action.
-        """
+    def execute_callback(self, seq_num: int) -> None:
+        """Execute the callback associated with the sequence number."""
         with self.pending_commands_lock:
             command_info = self.pending_commands.pop(seq_num, None)
-    
+
         if command_info:
-            callback = command_info['callback']
-            device = command_info['device']
-            action = command_info['action']
-            try:
-                callback(seq_num)  # Existing callback execution
-                _LOGGER.debug(f"Executed callback for sequence {seq_num} on device {device.device_id} for action '{action}'")
-                # Update the device state based on the action
-                if action == 'turn_on':
-                    device._state = True
-                elif action == 'turn_off':
-                    device._state = False
-                elif action == 'set_brightness':
-                    # Assuming brightness is already set in the callback
-                    pass
-                elif action == 'set_color_temp':
-                    # Assuming color_temp_kelvin is already set in the callback
-                    pass
-                elif action == 'set_rgb':
-                    # Assuming RGB is already set in the callback
-                    pass
-                else:
-                    _LOGGER.warning(f"Unknown action '{action}' for device {device.device_id}")
-                # Notify Home Assistant of the state change asynchronously
-                if device:
-                    asyncio.run_coroutine_threadsafe(device.publish_update(), self.hass.loop)
-            except Exception as e:
-                _LOGGER.error(f"Error executing callback for sequence {seq_num}: {e}")
-        else:
-            _LOGGER.warning(f"No pending command found for sequence {seq_num}.")
+            callback = command_info.get('callback')
+            if callback:
+                callback(seq_num)
 
-
-
-    async def send_request(
-        self,
-        packet: Packet,
-        callback: Optional[Callable[[int], None]] = None,
-        device: Optional['CyncSwitch'] = None,
-        action: Optional[str] = None,
-        **kwargs: Any  # Additional keyword arguments for action-specific data
-    ) -> Optional[int]:
-        """
-        Send a request packet to the server with an optional callback for acknowledgment.
-        Additional context: device and action.
-
-        Args:
-            packet (Packet): The packet to send.
-            callback (Optional[Callable[[int], None]]): Function to call upon acknowledgment.
-            device (Optional['CyncSwitch']): The device associated with the command.
-            action (Optional[str]): The action being performed.
-            **kwargs: Additional data related to the action.
-
-        Returns:
-            Optional[int]: The ack_seq_num of the sent packet, if applicable.
-        """
+    async def send_request(self, packet: Packet, callback: Optional[Callable[[int], None]] = None, device: Optional['CyncSwitch'] = None) -> Optional[int]:
+        """Send a request packet with an optional callback."""
         if not self.logged_in or not self.writer:
-            _LOGGER.error("Cannot send request: Not authenticated or writer not available.")
+            _LOGGER.error("Not authenticated or writer unavailable")
             return None
 
         encoded_packet = packet.encode()
         try:
             self.writer.write(encoded_packet)
             await self.writer.drain()
-            _LOGGER.debug(f"Sent packet: {encoded_packet.hex()} | Packet: {packet}")
-
             seq_num = self.extract_seq_num(packet)
-            if seq_num is None:
-                _LOGGER.error("Failed to extract sequence number from the packet.")
-                return None
 
-            # Extract controller_id from the first 4 bytes of packet.data
-            controller_id = int.from_bytes(packet.data[0:4], 'big')
-            ack_seq_num = (controller_id << 8) | seq_num
-
-            if callback and device and action:
+            if callback and device:
                 with self.pending_commands_lock:
-                    self.pending_commands[ack_seq_num] = {
-                        'callback': callback,
-                        'device': device,
-                        'action': action,
-                        # Include action-specific data
-                        **kwargs
-                    }
-                _LOGGER.debug(f"Registered callback for ack_seq_num {ack_seq_num} with device {device.device_id} and action '{action}'")
-            return ack_seq_num
-        except Exception as e:
-            _LOGGER.error(f"Error sending request: {e}")
-            _LOGGER.debug("Exception details:", exc_info=True)
-            return None
-
-
-    def extract_seq_num(self, packet: Packet) -> Optional[int]:
-        """
-        Extract the sequence number from a packet.
-
-        Args:
-            packet (Packet): The packet from which to extract the sequence number.
-
-        Returns:
-            Optional[int]: The extracted sequence number, or None if extraction fails.
-        """
-        try:
-            if packet.type != PACKET_TYPE_PIPE:
-                _LOGGER.warning(f"Packet type {packet.type} is not PIPE. Sequence number extraction skipped.")
-                return None
-            # Correctly extract sequence number from bytes 4-5
-            if len(packet.data) < 6:
-                _LOGGER.error("Packet data too short to extract sequence number.")
-                return None
-            seq_num = struct.unpack(">H", packet.data[4:6])[0]
+                    self.pending_commands[seq_num] = {'callback': callback, 'device': device}
             return seq_num
         except Exception as e:
-            _LOGGER.error(f"Error extracting sequence number: {e}")
-            _LOGGER.debug("Exception details:", exc_info=True)
+            _LOGGER.error(f"Error sending request: {e}")
             return None
+
+    def extract_seq_num(self, packet: Packet) -> Optional[int]:
+        """Extract sequence number from a packet."""
+        if packet.type != PACKET_TYPE_PIPE or len(packet.data) < 6:
+            return None
+        return struct.unpack(">H", packet.data[4:6])[0]
 
     # Packet creation methods
     def create_set_status_packet(self, controller_id: int, seq: int, device_index: int, status: int) -> Packet:
-        # Packet structure similar to cync-lan's CMD_TURN_ON
         data = bytearray()
-        
-        # Packet Type for 'set status'
-        data.extend(struct.pack(">B", PACKET_TYPE_REQUEST))  # Packet Type (e.g., 0x73 for status)
-    
-        # Zero padding (could be flags or reserved bytes in certain implementations)
-        data.extend(bytes([0x00, 0x00, 0x00]))
-    
-        # Packet Length (based on cync-lan, set accordingly)
-        data.extend(struct.pack(">B", 0x1f))
-    
-        # Status Command (turn on or off, matches cync-lan's byte 0x01 or 0x00)
-        data.extend(struct.pack(">B", status))
-    
-        # Device-specific information (controller ID, sequence number, etc.)
-        data.extend(struct.pack(">I H", controller_id, seq))
-    
-        # Device-specific mesh ID or similar identifier (this is important for addressing)
-        data.extend(struct.pack(">H", device_index))
-    
-        # Add fixed segment based on cync-lan (e.g., similar to '0x7e...' section in cync-lan)
-        data.extend(bytes([0x7e, 0x00, 0x00, 0x00]))
-    
-        # Additional status-related bytes (e.g., flags, padding, etc.)
-        data.extend(struct.pack(">I", 0xf8d00d))  # Example from cync-lan
-    
-        # Final status byte (turn off = 0x00, turn on = 0x01)
-        data.extend(struct.pack(">B", status))
-    
-        # Return the constructed packet
+
+        data.extend(struct.pack(">B", PACKET_TYPE_REQUEST))  # Packet Type (0x73 for status)
+        data.extend(bytes([0x00, 0x00, 0x00]))  # Zero padding
+        data.extend(struct.pack(">B", 0x1f))  # Packet Length
+        data.extend(struct.pack(">B", status))  # Status (0x01 to turn on, 0x00 to turn off)
+        data.extend(struct.pack(">I H", controller_id, seq))  # Controller ID and sequence number
+        data.extend(struct.pack(">H", device_index))  # Device index
+        data.extend(bytes([0x7e, 0x00, 0x00, 0x00]))  # Fixed segment
+        data.extend(struct.pack(">I", 0xf8d00d))  # Additional status-related bytes
+        data.extend(struct.pack(">B", status))  # Final status byte
+
         return Packet(PACKET_TYPE_PIPE, False, bytes(data))
- 
+
     def create_set_brightness_packet(self, controller_id: int, seq: int, device_index: int, brightness: int) -> Packet:
-        # Similar to cync-lan's CMD_SET_BRIGHTNESS
         data = bytearray()
-        
-        # Packet Type for brightness
-        data.extend(struct.pack(">B", PACKET_PIPE_TYPE_SET_LUM))
-        
-        # Zero padding (could be flags or reserved bytes in certain implementations)
-        data.extend(bytes([0x00, 0x00, 0x00]))
-        
-        # Packet Length (e.g., 0x1d based on cync-lan)
-        data.extend(struct.pack(">B", 0x1d))
-        
-        # Brightness Command (0x02 for brightness as seen in cync-lan)
-        data.extend(struct.pack(">B", 0x02))
-        
-        # Brightness Value
-        data.extend(struct.pack(">B", brightness))
-        
-        # Device-specific information (controller ID, sequence number, etc.)
-        data.extend(struct.pack(">I H", controller_id, seq))
-        
-        # Device Index/Mesh ID
-        data.extend(struct.pack(">H", device_index))
-        
-        # Add fixed segment (e.g., similar to cync-lan '0x7e...' section)
-        data.extend(bytes([0x7e, 0x00, 0x00, 0x00]))
-        
-        # Final brightness byte (duplicated for consistency, similar to cync-lan)
-        data.extend(struct.pack(">B", brightness))
-        
-        # Return the constructed packet
+
+        data.extend(struct.pack(">B", PACKET_TYPE_REQUEST))
+        data.extend(bytes([0x00, 0x00, 0x00]))  # Zero padding
+        data.extend(struct.pack(">B", 0x1d))  # Packet Length
+        data.extend(struct.pack(">B", 0x02))  # Brightness Command
+        data.extend(struct.pack(">B", brightness))  # Brightness Value
+        data.extend(struct.pack(">I H", controller_id, seq))  # Controller ID and sequence number
+        data.extend(struct.pack(">H", device_index))  # Device Index
+        data.extend(bytes([0x7e, 0x00, 0x00, 0x00]))  # Fixed segment
+        data.extend(struct.pack(">B", brightness))  # Final brightness byte
+
         return Packet(PACKET_TYPE_PIPE, False, bytes(data))
-    
+
     def create_set_ct_packet(self, controller_id: int, seq: int, device_index: int, ct: int) -> Packet:
         if ct < 0 or ct > 100:
-            raise ValueError("Color tone must be between 0 and 100.")
-        
-        # Device ID: 4 bytes, big-endian
-        device_id_bytes = controller_id.to_bytes(4, 'big')
-        
-        # Sequence Number: 2 bytes, big-endian
-        seq_num_bytes = struct.pack(">H", seq)
-        
-        # Additional fixed bytes
-        fixed_bytes = bytes([0x00]) + struct.pack(">H", 0x7e00) + bytes([1, 0, 0, 0xf8])
-        
-        # Subtype: 1 byte
-        subtype_byte = PACKET_PIPE_TYPE_SET_CT.to_bytes(1, 'big')
-        
-        # Payload: device_index (2 bytes, big-endian), command-specific data
-        payload = struct.pack(">H", device_index) + bytes([0x05, ct])
-        
-        # Payload Length: 1 byte
-        payload_length = len(payload).to_bytes(1, 'big')
-        
-        # Combine all parts
-        data = device_id_bytes + seq_num_bytes + fixed_bytes + subtype_byte + payload_length + payload + bytes([0x00, 0x00, 0x00])
-        
-        return Packet(PACKET_TYPE_PIPE, False, bytes(data))
-    
-    def create_set_rgb_packet(self, controller_id: int, seq: int, device_index: int, r: int, g: int, b: int) -> Packet:
-        # Similar to cync-lan's CMD_SET_COLOR
+            raise ValueError("Color temperature must be between 0 and 100.")
+
         data = bytearray()
-        
-        # Packet Type for RGB color
-        data.extend(struct.pack(">B", PACKET_PIPE_TYPE_SET_RGB))
-        
-        # Zero padding
-        data.extend(bytes([0x00, 0x00, 0x00]))
-        
-        # Packet Length (0x20 based on cync-lan)
-        data.extend(struct.pack(">B", 0x20))
-        
-        # RGB Command (0x04)
-        data.extend(struct.pack(">B", 0x04))
-        
-        # Red, Green, and Blue values
-        data.extend(struct.pack(">BBB", r, g, b))
-        
-        # Device-specific information
-        data.extend(struct.pack(">I H", controller_id, seq))
-        
-        # Device Mesh ID or Index
-        data.extend(struct.pack(">H", device_index))
-        
-        # Fixed section from cync-lan
-        data.extend(bytes([0x7e, 0x00, 0x00, 0x00]))
-        
-        # Padding/flags for RGB
-        data.extend(struct.pack(">I", 0xf8e20e))
-        
+
+        data.extend(struct.pack(">B", PACKET_TYPE_REQUEST))
+        data.extend(bytes([0x00, 0x00, 0x00]))  # Zero padding
+        data.extend(struct.pack(">B", 0x1e))  # Packet Length
+        data.extend(struct.pack(">B", 0x03))  # CT Command
+        data.extend(struct.pack(">B", ct))  # Color temperature value
+        data.extend(struct.pack(">I H", controller_id, seq))  # Controller ID and sequence number
+        data.extend(struct.pack(">H", device_index))  # Device Index
+        data.extend(bytes([0x7e, 0x00, 0x00, 0x00]))  # Fixed segment
+        data.extend(struct.pack(">B", ct))  # Final CT byte
+
+        return Packet(PACKET_TYPE_PIPE, False, bytes(data))
+
+    def create_set_rgb_packet(self, controller_id: int, seq: int, device_index: int, r: int, g: int, b: int) -> Packet:
+        data = bytearray()
+
+        data.extend(struct.pack(">B", PACKET_PIPE_TYPE_SET_RGB))  # Packet Type for RGB color
+        data.extend(bytes([0x00, 0x00, 0x00]))  # Zero padding
+        data.extend(struct.pack(">B", 0x20))  # Packet Length (0x20 based on cync-lan)
+        data.extend(struct.pack(">B", 0x04))  # RGB Command (0x04)
+        data.extend(struct.pack(">BBB", r, g, b))  # Red, Green, and Blue values
+        data.extend(struct.pack(">I H", controller_id, seq))  # Device-specific information
+        data.extend(struct.pack(">H", device_index))  # Device Mesh ID or Index
+        data.extend(bytes([0x7e, 0x00, 0x00, 0x00]))  # Fixed section from cync-lan
+        data.extend(struct.pack(">I", 0xf8e20e))  # Padding/flags for RGB
         return Packet(PACKET_TYPE_PIPE, False, bytes(data))
 
     def create_ping_packet(self) -> Packet:
-        # Similar to cync-lan's CLIENT_HEARTBEAT
         data = bytearray()
-    
-        # Packet Type for ping (0xd3 in this case)
-        data.extend(struct.pack(">B", PACKET_TYPE_PING))
-    
-        # Zero padding (matches cync-lan)
-        data.extend(bytes([0x00, 0x00, 0x00, 0x00]))
-    
-        # Return the constructed packet
+        data.extend(struct.pack(">B", PACKET_TYPE_PING))  # Packet Type for ping (0xd3 in this case)
+        data.extend(bytes([0x00, 0x00, 0x00, 0x00]))  # Zero padding (matches cync-lan)
         return Packet(PACKET_TYPE_PING, False, bytes(data))
-
-    
-    def create_get_status_paginated_packet(self, device_id: int, seq: int) -> Packet:
-        data = bytearray([
-            0x00, 0x00, 0x00, 0xFF, 0xFF, 0x00
-        ])
-        # Embed the sequence number into bytes 1-2 of the data if required
-        # Assuming Get Status Paginated doesn't require seq_num, based on protocol
-        packet = Packet(
-            packet_type=PACKET_TYPE_PIPE,
-            is_response=False,
-            data=bytes([PACKET_PIPE_TYPE_GET_STATUS_PAGINATED]) + bytes(data)
-        )
-        _LOGGER.debug(f"Created Get Status Paginated Packet: {packet}")
-        return packet
-
-
-    # Command sending methods
-    async def set_device_status(
-        self,
-        device_id: int,
-        device_index: int,
-        status: int,
-        callback: Optional[Callable[[int], None]] = None,
-        device: Optional['CyncSwitch'] = None,
-        action: Optional[str] = None
-    ) -> None:
-        """
-        Send a Set Status command to a device.
-        """
-        seq_num = self.get_seq_num()
-        packet = self.create_set_status_packet(device_id, seq_num, device_index, status)
-        await self.send_request(packet, callback, device=device, action=action)
-        
-
-
-    async def set_device_lum(
-        self,
-        device_id: int,
-        device_index: int,
-        brightness: int,
-        callback: Optional[Callable[[int], None]] = None,
-        device: Optional['CyncSwitch'] = None,
-        action: Optional[str] = None
-    ) -> None:
-        """
-        Send a Set Lum command to a device.
-        """
-        seq_num = self.get_seq_num()
-        packet = self.create_set_brightness_packet(device_id, seq_num, device_index, brightness)
-        await self.send_request(packet, callback, device=device, action=action)
-
-    async def set_device_ct(
-        self,
-        device_id: int,
-        device_index: int,
-        ct: int,
-        callback: Optional[Callable[[int], None]] = None,
-        device: Optional['CyncSwitch'] = None,
-        action: Optional[str] = None
-    ) -> None:
-        """
-        Send a Set CT command to a device.
-        """
-        seq_num = self.get_seq_num()
-        packet = self.create_set_ct_packet(device_id, seq_num, device_index, ct)
-        await self.send_request(packet, callback, device=device, action=action)
-
-    async def set_device_rgb(
-        self,
-        device_id: int,
-        device_index: int,
-        r: int,
-        g: int,
-        b: int,
-        callback: Optional[Callable[[int], None]] = None,
-        device: Optional['CyncSwitch'] = None,
-        action: Optional[str] = None
-    ) -> None:
-        """
-        Send a Set RGB command to a device.
-        """
-        seq_num = self.get_seq_num()
-        packet = self.create_set_rgb_packet(device_id, seq_num, device_index, r, g, b)
-        await self.send_request(packet, callback, device=device, action=action)
-
-    async def get_device_status_paginated(
-        self,
-        device_id: int,
-        callback: Optional[Callable[[str], None]] = None
-    ) -> None:
-        """
-        Send a Get Status Paginated command to a device.
-        """
-        seq_num = self.get_seq_num()
-        packet = self.create_get_status_paginated_packet(device_id, seq_num)
-        await self.send_request(packet, callback)
 
     # Shutdown method to gracefully close the connection
     def shutdown(self):
-        """
-        Gracefully shut down the CyncHub.
-        """
         self.shutting_down = True
         if self.writer:
             self.hass.loop.create_task(self._close_writer())
 
     async def _close_writer(self):
-        """
-        Close the writer asynchronously.
-        """
         self.writer.close()
         await self.writer.wait_closed()
         _LOGGER.info("CyncHub has been shut down.")
+
 
 class CyncRoom:
     def __init__(self, room_id: str, room_info: Dict[str, Any], hub) -> None:
@@ -1078,12 +441,12 @@ class CyncRoom:
     @property
     def max_color_temp_kelvin(self) -> int:
         """Return maximum supported color temperature in Kelvin."""
-        return 7000  # Adjust according to your devices' specifications
+        return 7000
 
     @property
     def min_color_temp_kelvin(self) -> int:
         """Return minimum supported color temperature in Kelvin."""
-        return 2000  # Adjust according to your devices' specifications
+        return 2000
 
     async def turn_on(
         self,
@@ -1361,13 +724,13 @@ class CyncSwitch:
         seq_brightness = None
         seq_rgb = None
         seq_status = None
-    
+
         # Convert brightness to percentage if needed
         if brightness is not None:
             brightness_value = max(1, min(100, round((brightness / 255) * 100)))
         else:
             brightness_value = self.brightness if self.brightness else 100  # Default to 100% if no brightness is set
-    
+
         # Handle color temperature
         if color_temp_kelvin is not None:
             color_temp = max(0, min(100, round(
@@ -1378,13 +741,13 @@ class CyncSwitch:
             )))
         else:
             color_temp = None
-    
+
         # Handle RGB color
         if rgb_color is not None:
             r, g, b = rgb_color
         else:
             r, g, b = self.rgb['r'], self.rgb['g'], self.rgb['b']
-    
+
         # Handle effects
         if effect is not None:
             # Implement effect handling logic here
@@ -1394,46 +757,46 @@ class CyncSwitch:
             if effect_index is not None:
                 # Send effect command to the device
                 pass  # Placeholder for effect command implementation
-    
+
         # Handle transition
         if transition is not None:
             # Implement transition handling logic here
             self.transition = transition
             # For example, set the transition time for the device
             pass  # Placeholder for transition command implementation
-    
+
         while not update_received and attempts < int(self._command_retry_time / self._command_timeout):
             # Unique sequence numbers for each command
             seq_status = self.hub.get_seq_num()
             controller = int(self.controllers[attempts % len(self.controllers)] if self.controllers else self.default_controller)
-    
+
             # Send Set Status (On) with unique seq_num
             status_packet = self.hub.create_set_status_packet(controller, seq_status, self.mesh_id_int, 1)
             await self.hub.send_request(status_packet, self.command_received)
-    
+
             # Send Set Brightness with unique seq_num
             if self.support_brightness:
                 seq_brightness = self.hub.get_seq_num()
                 brightness_packet = self.hub.create_set_brightness_packet(controller, seq_brightness, self.mesh_id_int, brightness_value)
                 await self.hub.send_request(brightness_packet, self.command_received)
-    
+
             # Send Set Color Temperature with unique seq_num
             if self.support_color_temp and color_temp is not None:
                 seq_ct = self.hub.get_seq_num()
                 color_temp_packet = self.hub.create_set_ct_packet(controller, seq_ct, self.mesh_id_int, ct=color_temp)
                 await self.hub.send_request(color_temp_packet, self.command_received)
-    
+
             # Send Set RGB with unique seq_num
             if self.support_rgb and rgb_color is not None:
                 seq_rgb = self.hub.get_seq_num()
                 rgb_packet = self.hub.create_set_rgb_packet(controller, seq_rgb, self.mesh_id_int, r, g, b)
                 await self.hub.send_request(rgb_packet, self.command_received)
-    
+
             # Implement effect and transition commands here if applicable
-    
+
             # Wait for all acknowledgments
             await asyncio.sleep(self._command_timeout)
-    
+
             # Check if all commands have been acknowledged
             pending = [
                 self.hub.pending_commands.get(seq_status),
@@ -1441,7 +804,7 @@ class CyncSwitch:
                 self.hub.pending_commands.get(seq_ct) if self.support_color_temp else None,
                 self.hub.pending_commands.get(seq_rgb) if self.support_rgb else None
             ]
-    
+
             if not any(pending):
                 update_received = True
             else:
