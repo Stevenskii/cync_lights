@@ -11,7 +11,6 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 _LOGGER = logging.getLogger(__name__)
 
-# Used for CyncUserData
 API_AUTH = "https://api.gelighting.com/v2/user_auth"
 API_REQUEST_CODE = "https://api.gelighting.com/v2/two_factor/email/verifycode"
 API_2FACTOR_AUTH = "https://api.gelighting.com/v2/user_auth/two_factor"
@@ -70,20 +69,21 @@ class InvalidCyncConfiguration(Exception):
     """Cync configuration is not supported"""
 
 # Packet types
-PACKET_TYPE_REQUEST = 0x73  # 115 in decimal
-PACKET_TYPE_RESPONSE = 0x7B  # 123 in decimal
-PACKET_TYPE_PING = 0xA3      # 163 in decimal
-PACKET_TYPE_LOGIN = 0xD3     # 211 in decimal
-PACKET_TYPE_INITIAL_STATE = 0xAB  # 171 in decimal
-PACKET_TYPE_STATE_UPDATE = 0x43   # 67 in decimal
+PACKET_TYPE_AUTH = 1
+PACKET_TYPE_SYNC = 4
+PACKET_TYPE_PIPE = 7
+PACKET_TYPE_PIPE_SYNC = 8
 
-# Subtypes
-SUBTYPE_STATUS_UPDATE = 0xDB  # 219 in decimal
-SUBTYPE_MOTION_SENSOR = 0x54  # 84 in decimal
-SUBTYPE_INITIAL_STATE = 0x52  # 82 in decimal
-
-# Other constants
-MAX_SEQ_NUM = 65535
+# Pipe subtypes
+PACKET_PIPE_TYPE_SET_STATUS = 0xd0
+PACKET_PIPE_TYPE_SET_LUM = 0xd2
+PACKET_PIPE_TYPE_SET_CT = 0xe2
+PACKET_PIPE_TYPE_GET_STATUS = 0xdb
+PACKET_PIPE_TYPE_GET_STATUS_PAGINATED = 0x52
+# Pipe subtypes for acknowledgments
+PACKET_PIPE_SUBTYPE_ACK_SET_STATUS = 17
+PACKET_PIPE_SUBTYPE_ACK_SET_LUM = 18
+PACKET_PIPE_SUBTYPE_ACK_SET_CT = 37
 
 # Constants
 DEFAULT_TIMEOUT = 10  # seconds
@@ -155,28 +155,34 @@ class CyncHub:
         self.login_code = bytearray(data['cync_credentials'])
         self.use_ssl = options.get("use_ssl", True)
 
-        # Initialize device attributes (no more room-based management)
+        # Initialize device attributes
         self.home_devices = data['cync_config']['home_devices']
         self.home_controllers = data['cync_config']['home_controllers']
         self.switchID_to_homeID = data['cync_config']['switchID_to_homeID']
-
-        self.effect_mapping = self._parse_light_shows(data['cync_config'])
-        # Handle device initialization directly (rooms only for suggested area)
-        self.cync_rooms = {room_id:CyncSwitch(room_id,room_info,self) for room_id,room_info in data['cync_config']['rooms'].items()}
+        self.connected_devices = {home_id: [] for home_id in self.home_controllers.keys()}
+        self.shutting_down = False
+        self.cync_rooms = {room_id: CyncRoom(room_id, room_info, self) for room_id, room_info in data['cync_config']['rooms'].items()}
         self.cync_switches = {
-            device_id: CyncSwitch(device_id, switch_info, self)
+            device_id: CyncSwitch(device_id, switch_info, self.cync_rooms.get(switch_info['room'], None), self)
             for device_id, switch_info in data['cync_config']['devices'].items() if switch_info.get("ONOFF", False)
         }
         self.cync_motion_sensors = {
-            device_id: CyncMotionSensor(device_id, device_info)
+            device_id: CyncMotionSensor(device_id, device_info, self.cync_rooms.get(device_info['room'], None))
             for device_id, device_info in data['cync_config']['devices'].items() if device_info.get("MOTION", False)
         }
         self.cync_ambient_light_sensors = {
-            device_id: CyncAmbientLightSensor(device_id, device_info)
+            device_id: CyncAmbientLightSensor(device_id, device_info, self.cync_rooms.get(device_info['room'], None))
             for device_id, device_info in data['cync_config']['devices'].items() if device_info.get("AMBIENT_LIGHT", False)
         }
+        self.switchID_to_deviceIDs = {
+            device_info.switch_id: [dev_id for dev_id, dev_info in self.cync_switches.items() if dev_info.switch_id == device_info.switch_id]
+            for device_id, device_info in self.cync_switches.items() if int(device_info.switch_id) > 0
+        }
+        self.connected_devices_updated = False
+        self.effect_mapping = self._parse_light_shows(data['cync_config'])
+        [room.initialize() for room in self.cync_rooms.values() if room.is_subgroup]
+        [room.initialize() for room in self.cync_rooms.values() if not room.is_subgroup]
 
-        # Initialize other attributes and connection setup (no room logic)
         self.ssl_context: Optional[ssl.SSLContext] = None
         self.reader: Optional[asyncio.StreamReader] = None
         self.writer: Optional[asyncio.StreamWriter] = None
@@ -191,10 +197,11 @@ class CyncHub:
 
         self.pending_commands: Dict[int, Dict[str, Any]] = {}
         self.pending_commands_lock = threading.Lock()
-
+        [room.initialize() for room in self.cync_rooms.values() if room.is_subgroup]
+        [room.initialize() for room in self.cync_rooms.values() if not room.is_subgroup]
+    
         # Schedule the connect method
         self.hass.loop.create_task(self.connect())
-
 
     def get_seq_num(self):
         """Thread-safe method to get the next sequence number."""
@@ -336,92 +343,6 @@ class CyncHub:
                 await asyncio.sleep(5)  # Wait before retrying
 
         raise ShuttingDown
-
-    async def combo_control(
-        self,
-        device_id: int,
-        device_index: int,
-        power_state: Optional[bool] = None,
-        brightness: Optional[int] = None,
-        color_temp_kelvin: Optional[int] = None,
-        rgb: Optional[Tuple[int, int, int]] = None
-    ) -> None:
-        """
-        Unified control method for setting power state, brightness, color temperature, and RGB.
-        Handles each attribute only if it is provided (not None).
-        """
-
-        # Validate brightness, color temp, and RGB ranges
-        if brightness is not None:
-            brightness_value = max(BRIGHTNESS_MIN, min(BRIGHTNESS_MAX, brightness))
-        else:
-            brightness_value = None
-        
-        if color_temp_kelvin is not None:
-            color_temp_value = max(0, min(100, round(
-                (color_temp_kelvin - MIN_COLOR_TEMP_KELVIN) /
-                (MAX_COLOR_TEMP_KELVIN - MIN_COLOR_TEMP_KELVIN) * 100
-            )))
-        else:
-            color_temp_value = None
-
-        if rgb is not None:
-            r, g, b = rgb
-        else:
-            r, g, b = None, None, None
-
-        # Send each packet as needed, starting with the power state
-        if power_state is not None:
-            seq_status = self.get_seq_num()
-            controller = self.default_controller  # Ensure the correct controller is used
-            status_packet = self.create_set_status_packet(controller, seq_status, device_index, int(power_state))
-            await self.send_request(status_packet, action='set_power')
-
-        # Send brightness packet if brightness is specified
-        if brightness_value is not None:
-            seq_brightness = self.get_seq_num()
-            brightness_packet = self.create_set_lum_packet(controller, seq_brightness, device_index, brightness_value)
-            await self.send_request(brightness_packet, action='set_brightness')
-
-        # Send color temperature packet if color temperature is specified
-        if color_temp_value is not None:
-            seq_color_temp = self.get_seq_num()
-            color_temp_packet = self.create_set_ct_packet(controller, seq_color_temp, device_index, color_temp_value)
-            await self.send_request(color_temp_packet, action='set_color_temp')
-
-        # Send RGB packet if RGB values are specified
-        if rgb is not None:
-            seq_rgb = self.get_seq_num()
-            rgb_packet = self.create_set_rgb_packet(controller, seq_rgb, device_index, r, g, b)
-            await self.send_request(rgb_packet, action='set_rgb')
-
-    async def turn_on(
-        self,
-        brightness: Optional[int] = None,
-        color_temp_kelvin: Optional[int] = None,
-        rgb: Optional[Tuple[int, int, int]] = None
-    ) -> None:
-        """
-        Turns on the device and optionally sets brightness, color temperature, and RGB.
-        """
-        await self.combo_control(
-            device_id=self.device_id,
-            device_index=self.mesh_id_int,
-            power_state=True,
-            brightness=brightness,
-            color_temp_kelvin=color_temp_kelvin,
-            rgb=rgb
-        )
-
-    async def turn_off(self) -> None:
-        """
-        Turns off the device.
-        """
-        await self.combo_control(
-            device_id=self.device_id,
-            device_index=self.mesh_id_int,
-            power_state=False
-        )
 
     async def handle_packet(self, packet_type: int, is_response: bool, data: bytes):
         """
@@ -817,23 +738,205 @@ class CyncHub:
             _LOGGER.debug("Exception details:", exc_info=True)
             return None
 
-
-    # Simplified example of packet creation
+    # Packet creation methods
     def create_set_status_packet(self, controller_id: int, seq: int, device_index: int, status: int) -> Packet:
-        data = struct.pack(">I H B", controller_id, seq, status)
-        return Packet(PACKET_TYPE_PIPE, False, data)
+        # Device ID (Controller ID): 4 bytes, big-endian
+        device_id_bytes = controller_id.to_bytes(4, 'big')
+        # Sequence Number: 2 bytes, big-endian
+        seq_num_bytes = struct.pack(">H", seq)
+        # Additional fixed bytes
+        fixed_bytes = bytes([0x00]) + struct.pack(">H", 0x7e00) + bytes([1, 0, 0, 0xf8])
+        # Subtype: 1 byte
+        subtype_byte = PACKET_PIPE_TYPE_SET_STATUS.to_bytes(1, 'big')
+        # Payload: device_index (2 bytes, big-endian), status (1 byte)
+        payload = struct.pack(">H", device_index) + bytes([status])
+        # Payload Length: 1 byte
+        payload_length = len(payload).to_bytes(1, 'big')
+        # Combine all parts and add padding
+        data = device_id_bytes + seq_num_bytes + fixed_bytes + subtype_byte + payload_length + payload + bytes([0x00, 0x00, 0x00])
+
+        packet = Packet(
+            packet_type=PACKET_TYPE_PIPE,
+            is_response=False,
+            data=data
+        )
+        _LOGGER.debug(f"Created Set Status Packet: {packet}")
+        return packet
+
+
 
     def create_set_lum_packet(self, controller_id: int, seq: int, device_index: int, brightness: int) -> Packet:
-        data = struct.pack(">I H B", controller_id, seq, brightness)
-        return Packet(PACKET_TYPE_PIPE, False, data)
+        if brightness < 1 or brightness > 100:
+            raise ValueError("Brightness must be between 1 and 100.")
+        # Device ID: 4 bytes, big-endian
+        device_id_bytes = controller_id.to_bytes(4, 'big')
+        # Sequence Number: 2 bytes, big-endian
+        seq_num_bytes = struct.pack(">H", seq)
+        # Additional fixed bytes
+        fixed_bytes = bytes([0x00]) + struct.pack(">H", 0x7e00) + bytes([1, 0, 0, 0xf8])
+        # Subtype: 1 byte
+        subtype_byte = PACKET_PIPE_TYPE_SET_LUM.to_bytes(1, 'big')
+        # Payload: device_index (2 bytes, big-endian), command-specific data
+        payload = struct.pack(">H", device_index) + bytes([brightness])
+        # Payload Length: 1 byte
+        payload_length = len(payload).to_bytes(1, 'big')
+        # Combine all parts
+        data = device_id_bytes + seq_num_bytes + fixed_bytes + subtype_byte + payload_length + payload + bytes([0x00, 0x00, 0x00])
+        
+        packet = Packet(
+            packet_type=PACKET_TYPE_PIPE,
+            is_response=False,
+            data=data
+        )
+        _LOGGER.debug(f"Created Set Lum Packet: {packet}")
+        return packet
 
+    
     def create_set_ct_packet(self, controller_id: int, seq: int, device_index: int, ct: int) -> Packet:
-        data = struct.pack(">I H B", controller_id, seq, ct)
-        return Packet(PACKET_TYPE_PIPE, False, data)
-
+        if ct < 0 or ct > 100:
+            raise ValueError("Color tone must be between 0 and 100.")
+        # Device ID: 4 bytes, big-endian
+        device_id_bytes = controller_id.to_bytes(4, 'big')
+        # Sequence Number: 2 bytes, big-endian
+        seq_num_bytes = struct.pack(">H", seq)
+        # Additional fixed bytes
+        fixed_bytes = bytes([0x00]) + struct.pack(">H", 0x7e00) + bytes([1, 0, 0, 0xf8])
+        # Subtype: 1 byte
+        subtype_byte = PACKET_PIPE_TYPE_SET_CT.to_bytes(1, 'big')
+        # Payload: device_index (2 bytes, big-endian), command-specific data
+        payload = struct.pack(">H", device_index) + bytes([0x05, ct])
+        # Payload Length: 1 byte
+        payload_length = len(payload).to_bytes(1, 'big')
+        # Combine all parts
+        data = device_id_bytes + seq_num_bytes + fixed_bytes + subtype_byte + payload_length + payload + bytes([0x00, 0x00, 0x00])
+        
+        packet = Packet(
+            packet_type=PACKET_TYPE_PIPE,
+            is_response=False,
+            data=data
+        )
+        _LOGGER.debug(f"Created Set CT Packet: {packet}")
+        return packet
+    
     def create_set_rgb_packet(self, controller_id: int, seq: int, device_index: int, r: int, g: int, b: int) -> Packet:
-        data = struct.pack(">I H BBB", controller_id, seq, r, g, b)
-        return Packet(PACKET_TYPE_PIPE, False, data)
+        # Device ID: 4 bytes, big-endian
+        device_id_bytes = controller_id.to_bytes(4, 'big')
+        # Sequence Number: 2 bytes, big-endian
+        seq_num_bytes = struct.pack(">H", seq)
+        # Additional fixed bytes
+        fixed_bytes = bytes([0x00]) + struct.pack(">H", 0x7e00) + bytes([1, 0, 0, 0xf8])
+        # Subtype: 1 byte (Assuming CT subtype for RGB as per Go API)
+        subtype_byte = PACKET_PIPE_TYPE_SET_CT.to_bytes(1, 'big')
+        # Payload: device_index (2 bytes, big-endian), command-specific data
+        payload = struct.pack(">H", device_index) + bytes([0x04, r, g, b])
+        # Payload Length: 1 byte
+        payload_length = len(payload).to_bytes(1, 'big')
+        # Combine all parts
+        data = device_id_bytes + seq_num_bytes + fixed_bytes + subtype_byte + payload_length + payload + bytes([0x00, 0x00, 0x00])
+        
+        packet = Packet(
+            packet_type=PACKET_TYPE_PIPE,
+            is_response=False,
+            data=data
+        )
+        _LOGGER.debug(f"Created Set RGB Packet: {packet}")
+        return packet
+    
+    def create_get_status_paginated_packet(self, device_id: int, seq: int) -> Packet:
+        data = bytearray([
+            0x00, 0x00, 0x00, 0xFF, 0xFF, 0x00
+        ])
+        # Embed the sequence number into bytes 1-2 of the data if required
+        # Assuming Get Status Paginated doesn't require seq_num, based on protocol
+        packet = Packet(
+            packet_type=PACKET_TYPE_PIPE,
+            is_response=False,
+            data=bytes([PACKET_PIPE_TYPE_GET_STATUS_PAGINATED]) + bytes(data)
+        )
+        _LOGGER.debug(f"Created Get Status Paginated Packet: {packet}")
+        return packet
+
+
+    # Command sending methods
+    async def set_device_status(
+        self,
+        device_id: int,
+        device_index: int,
+        status: int,
+        callback: Optional[Callable[[int], None]] = None,
+        device: Optional['CyncSwitch'] = None,
+        action: Optional[str] = None
+    ) -> None:
+        """
+        Send a Set Status command to a device.
+        """
+        seq_num = self.get_seq_num()
+        packet = self.create_set_status_packet(device_id, seq_num, device_index, status)
+        await self.send_request(packet, callback, device=device, action=action)
+        
+
+
+    async def set_device_lum(
+        self,
+        device_id: int,
+        device_index: int,
+        brightness: int,
+        callback: Optional[Callable[[int], None]] = None,
+        device: Optional['CyncSwitch'] = None,
+        action: Optional[str] = None
+    ) -> None:
+        """
+        Send a Set Lum command to a device.
+        """
+        seq_num = self.get_seq_num()
+        packet = self.create_set_lum_packet(device_id, seq_num, device_index, brightness)
+        await self.send_request(packet, callback, device=device, action=action)
+
+    async def set_device_ct(
+        self,
+        device_id: int,
+        device_index: int,
+        ct: int,
+        callback: Optional[Callable[[int], None]] = None,
+        device: Optional['CyncSwitch'] = None,
+        action: Optional[str] = None
+    ) -> None:
+        """
+        Send a Set CT command to a device.
+        """
+        seq_num = self.get_seq_num()
+        packet = self.create_set_ct_packet(device_id, seq_num, device_index, ct)
+        await self.send_request(packet, callback, device=device, action=action)
+
+    async def set_device_rgb(
+        self,
+        device_id: int,
+        device_index: int,
+        r: int,
+        g: int,
+        b: int,
+        callback: Optional[Callable[[int], None]] = None,
+        device: Optional['CyncSwitch'] = None,
+        action: Optional[str] = None
+    ) -> None:
+        """
+        Send a Set RGB command to a device.
+        """
+        seq_num = self.get_seq_num()
+        packet = self.create_set_rgb_packet(device_id, seq_num, device_index, r, g, b)
+        await self.send_request(packet, callback, device=device, action=action)
+
+    async def get_device_status_paginated(
+        self,
+        device_id: int,
+        callback: Optional[Callable[[str], None]] = None
+    ) -> None:
+        """
+        Send a Get Status Paginated command to a device.
+        """
+        seq_num = self.get_seq_num()
+        packet = self.create_get_status_paginated_packet(device_id, seq_num)
+        await self.send_request(packet, callback)
 
     # Shutdown method to gracefully close the connection
     def shutdown(self):
@@ -852,8 +955,300 @@ class CyncHub:
         await self.writer.wait_closed()
         _LOGGER.info("CyncHub has been shut down.")
 
+class CyncRoom:
+    def __init__(self, room_id: str, room_info: Dict[str, Any], hub) -> None:
+        """Initialize the Cync Room."""
+        self.hub = hub
+        self.room_id = room_id
+        self.home_id = room_id.split('-')[0]
+        self.name = room_info.get('name', 'unknown')
+        self.home_name = room_info.get('home_name', 'unknown')
+        self.parent_room = room_info.get('parent_room', 'unknown')
+        self.mesh_id = int(room_info.get('mesh_id', 0)).to_bytes(2, 'little')
+        self.mesh_id_int = int.from_bytes(self.mesh_id, 'big')
+        self.power_state = False
+        self.brightness = 0
+        self.color_temp_kelvin = 0
+        self.rgb = {'r': 0, 'g': 0, 'b': 0, 'active': False}
+        self.switches = room_info.get('switches', [])
+        self.subgroups = room_info.get('subgroups', [])
+        self.is_subgroup = room_info.get('isSubgroup', False)
+        self.all_room_switches = self.switches.copy()
+        self.controllers: List[str] = []
+        self.default_controller = room_info.get('room_controller', self.hub.home_controllers[self.home_id][0])
+        self._update_callback: Optional[Callable[[], None]] = None
+        self._update_parent_room: Optional[Callable[[], None]] = None
+        self.support_brightness = False
+        self.support_color_temp = False
+        self.support_rgb = False
+        self.switches_support_brightness = []
+        self.switches_support_color_temp = []
+        self.switches_support_rgb = []
+        self.groups_support_brightness = []
+        self.groups_support_color_temp = []
+        self.groups_support_rgb = []
+        self._command_timeout = 0.5
+        self._command_retry_time = 5
+
+    def initialize(self):
+        """Initialize supported features and register update functions for switches and subgroups."""
+        self.switches_support_brightness = [
+            device_id for device_id in self.switches if self.hub.cync_switches[device_id].support_brightness
+        ]
+        self.switches_support_color_temp = [
+            device_id for device_id in self.switches if self.hub.cync_switches[device_id].support_color_temp
+        ]
+        self.switches_support_rgb = [
+            device_id for device_id in self.switches if self.hub.cync_switches[device_id].support_rgb
+        ]
+        self.groups_support_brightness = [
+            room_id for room_id in self.subgroups if self.hub.cync_rooms[room_id].support_brightness
+        ]
+        self.groups_support_color_temp = [
+            room_id for room_id in self.subgroups if self.hub.cync_rooms[room_id].support_color_temp
+        ]
+        self.groups_support_rgb = [
+            room_id for room_id in self.subgroups if self.hub.cync_rooms[room_id].support_rgb
+        ]
+        self.support_brightness = (len(self.switches_support_brightness) + len(self.groups_support_brightness)) > 0
+        self.support_color_temp = (len(self.switches_support_color_temp) + len(self.groups_support_color_temp)) > 0
+        self.support_rgb = (len(self.switches_support_rgb) + len(self.groups_support_rgb)) > 0
+        for switch_id in self.switches:
+            self.hub.cync_switches[switch_id].register_room_updater(self.update_room)
+        for subgroup in self.subgroups:
+            self.hub.cync_rooms[subgroup].register_room_updater(self.update_room)
+            self.all_room_switches.extend(self.hub.cync_rooms[subgroup].switches)
+        for subgroup in self.subgroups:
+            self.hub.cync_rooms[subgroup].all_room_switches = self.all_room_switches
+
+    def register(self, update_callback) -> None:
+        """Register callback to be called when the room changes state."""
+        self._update_callback = update_callback
+
+    def reset(self) -> None:
+        """Remove previously registered callback."""
+        self._update_callback = None
+
+    def register_room_updater(self, parent_updater):
+        """Register callback for parent room updates."""
+        self._update_parent_room = parent_updater
+
+    @property
+    def max_color_temp_kelvin(self) -> int:
+        """Return maximum supported color temperature in Kelvin."""
+        return 7000  # Adjust according to your devices' specifications
+
+    @property
+    def min_color_temp_kelvin(self) -> int:
+        """Return minimum supported color temperature in Kelvin."""
+        return 2000  # Adjust according to your devices' specifications
+
+    async def turn_on(
+        self,
+        brightness: Optional[int] = None,
+        color_temp_kelvin: Optional[int] = None,
+        **kwargs: Any
+    ) -> None:
+        """Turn on the room lights."""
+        attempts = 0
+        update_received = False
+        seq_ct = None
+        seq_brightness = None
+        seq_status = None
+        seq_rgb = None
+
+        while not update_received and attempts < int(self._command_retry_time / self._command_timeout):
+            # Unique sequence numbers for each command
+            seq_status = self.hub.get_seq_num()
+            controller = self.controllers[attempts % len(self.controllers)] if self.controllers else self.default_controller
+
+            # Handle brightness
+            brightness_value = brightness if brightness is not None else self.brightness or 100
+
+            # Handle color temperature
+            color_temp = round(
+                (
+                    (color_temp_kelvin - self.min_color_temp_kelvin) /
+                    (self.max_color_temp_kelvin - self.min_color_temp_kelvin)
+                ) * 100
+            ) if color_temp_kelvin is not None else 50  # Default mid value
+
+            # Send Set Status (On) with unique seq_num and correct device_index
+            status_packet = self.hub.create_set_status_packet(
+                controller,
+                seq_status,
+                device_index=self.mesh_id_int,  # Use mesh_id_int
+                status=1
+            )
+            await self.hub.send_request(status_packet, self.command_received, device=self, action='turn_on_or_off', desired_state=True)
+
+            # Send Set Brightness with unique seq_num and correct device_index
+            if self.support_brightness:
+                seq_brightness = self.hub.get_seq_num()
+                brightness_packet = self.hub.create_set_lum_packet(
+                    controller,
+                    seq_brightness,
+                    device_index=self.mesh_id_int,  # Use mesh_id_int
+                    brightness=brightness_value
+                )
+                await self.hub.send_request(brightness_packet, self.command_received, device=self, action='set_brightness', brightness=brightness_value)
+
+            # Send Set Color Temperature with unique seq_num and correct device_index
+            if self.support_color_temp:
+                seq_ct = self.hub.get_seq_num()
+                color_temp_packet = self.hub.create_set_ct_packet(
+                    controller,
+                    seq_ct,
+                    device_index=self.mesh_id_int,  # Use mesh_id_int
+                    ct=color_temp
+                )
+                await self.hub.send_request(color_temp_packet, self.command_received, device=self, action='set_color_temp', color_temp_kelvin=color_temp_kelvin)
+
+            # Wait for all acknowledgments
+            await asyncio.sleep(self._command_timeout)
+
+            # Check if all commands have been acknowledged
+            if (
+                not self.hub.pending_commands.get((controller << 8) | seq_status) and
+                not self.hub.pending_commands.get((controller << 8) | seq_brightness) and
+                (not self.support_color_temp or not self.hub.pending_commands.get((controller << 8) | seq_ct))
+            ):
+                update_received = True
+            else:
+                attempts += 1
+                _LOGGER.debug(f"Attempt {attempts} to turn on the room lights.")
+
+    async def turn_off(self, **kwargs: Any) -> None:
+        """Turn off the room lights."""
+        attempts = 0
+        update_received = False
+        while not update_received and attempts < int(self._command_retry_time / self._command_timeout):
+            seq = self.hub.get_seq_num()
+            controller = self.controllers[attempts % len(self.controllers)] if self.controllers else self.default_controller
+
+            # Send Set Status (Off) with unique seq_num and correct device_index
+            status_packet = self.hub.create_set_status_packet(
+                controller,
+                seq,
+                device_index=self.mesh_id_int,  # Use mesh_id_int
+                status=0
+            )
+            await self.hub.send_request(status_packet, self.command_received, device=self, action='turn_on_or_off', desired_state=False)
+
+            # Wait for acknowledgment
+            await asyncio.sleep(self._command_timeout)
+
+            # Check if the command has been acknowledged
+            if not self.hub.pending_commands.get((controller << 8) | seq):
+                update_received = True
+            else:
+                attempts += 1
+                _LOGGER.debug(f"Attempt {attempts} to turn off the room lights.")
+
+    def command_received(self, seq: int):
+        """Handle command acknowledgment from the Cync server."""
+        self.hub.pending_commands.pop(seq, None)
+
+    def update_room(self):
+        """Update the current state of the room."""
+        _brightness = self.brightness
+        _color_temp = self.color_temp_kelvin
+        _rgb = self.rgb.copy()  # Make a copy to avoid mutating the original
+        _power_state = any(
+            self.hub.cync_switches[device_id].power_state for device_id in self.switches
+        ) or any(
+            self.hub.cync_rooms[room_id].power_state for room_id in self.subgroups
+        )
+
+        if self.support_brightness:
+            total_brightness = sum(
+                self.hub.cync_switches[device_id].brightness for device_id in self.switches
+            ) + sum(
+                self.hub.cync_rooms[room_id].brightness for room_id in self.subgroups
+            )
+            count = len(self.switches) + len(self.subgroups)
+            _brightness = round(total_brightness / count) if count > 0 else 0
+        else:
+            _brightness = 100 if _power_state else 0
+
+        if self.support_color_temp:
+            total_color_temp = sum(
+                self.hub.cync_switches[device_id].color_temp_kelvin for device_id in self.switches_support_color_temp
+            ) + sum(
+                self.hub.cync_rooms[room_id].color_temp_kelvin for room_id in self.groups_support_color_temp
+            )
+            count = len(self.switches_support_color_temp) + len(self.groups_support_color_temp)
+            _color_temp = round(total_color_temp / count) if count > 0 else 0
+        else:
+            _color_temp = self.color_temp_kelvin
+
+        if self.support_rgb:
+            count = len(self.switches_support_rgb) + len(self.groups_support_rgb)
+            total_r = sum(
+                self.hub.cync_switches[device_id].rgb['r'] for device_id in self.switches_support_rgb
+            ) + sum(
+                self.hub.cync_rooms[room_id].rgb['r'] for room_id in self.groups_support_rgb
+            )
+            total_g = sum(
+                self.hub.cync_switches[device_id].rgb['g'] for device_id in self.switches_support_rgb
+            ) + sum(
+                self.hub.cync_rooms[room_id].rgb['g'] for room_id in self.groups_support_rgb
+            )
+            total_b = sum(
+                self.hub.cync_switches[device_id].rgb['b'] for device_id in self.switches_support_rgb
+            ) + sum(
+                self.hub.cync_rooms[room_id].rgb['b'] for room_id in self.groups_support_rgb
+            )
+            if count > 0:
+                _rgb['r'] = round(total_r / count)
+                _rgb['g'] = round(total_g / count)
+                _rgb['b'] = round(total_b / count)
+            else:
+                _rgb['r'] = _rgb['g'] = _rgb['b'] = 0
+
+            _rgb['active'] = any(
+                self.hub.cync_switches[device_id].rgb.get('active', False) for device_id in self.switches_support_rgb
+            ) or any(
+                self.hub.cync_rooms[room_id].rgb.get('active', False) for room_id in self.groups_support_rgb
+            )
+        else:
+            _rgb = self.rgb
+
+        # Check if any state has changed
+        if (
+            _power_state != self.power_state or
+            _brightness != self.brightness or
+            _color_temp != self.color_temp_kelvin or
+            _rgb != self.rgb
+        ):
+            self.power_state = _power_state
+            self.brightness = _brightness
+            self.color_temp_kelvin = _color_temp
+            self.rgb = _rgb
+            self.publish_update()
+            if self._update_parent_room:
+                asyncio.run_coroutine_threadsafe(self._update_parent_room(), self.hub.hass.loop)
+
+    def update_controllers(self):
+        """Update the list of responsive, Wi-Fi connected controller devices."""
+        connected_devices = self.hub.connected_devices[self.home_id]
+        controllers = [
+            self.hub.cync_switches[dev_id].switch_id
+            for dev_id in self.all_room_switches if dev_id in connected_devices
+        ]
+        others_available = [
+            self.hub.cync_switches[dev_id].switch_id
+            for dev_id in connected_devices if dev_id not in self.all_room_switches
+        ]
+        self.controllers = controllers + others_available if connected_devices else [self.default_controller]
+
+    def publish_update(self):
+        """Publish the update to Home Assistant."""
+        if self._update_callback:
+            asyncio.run_coroutine_threadsafe(self._update_callback(), self.hub.hass.loop)
+
 class CyncSwitch:
-    def __init__(self, device_id, switch_info, hub) -> None:
+    def __init__(self, device_id, switch_info, room, hub) -> None:
         self.hub = hub
         self.device_id = device_id
         self.switch_id = switch_info.get('switch_id', '0')
@@ -862,22 +1257,29 @@ class CyncSwitch:
             if self.device_id in home_devices
         ][0]
         self.name = switch_info.get('name', 'unknown')
+        self.home_name = switch_info.get('home_name', 'unknown')
         self.mesh_id = switch_info.get('mesh_id', 0).to_bytes(2, 'little')
         self.mesh_id_int = int.from_bytes(self.mesh_id, 'big')
+        self.room = room
         self.power_state = False
         self.brightness = 0
         self.color_temp_kelvin = 0
         self.rgb = {'r': 0, 'g': 0, 'b': 0, 'active': False}
-        
-        # Initialize support for capabilities, including plug and fan
+        self.effect = None
+        self.transition = None
+        self.default_controller = int(switch_info.get('switch_controller', self.hub.home_controllers[self.home_id][0]))
+        self.controllers: List[int] = []
+        self._update_callback: Optional[Callable[[], None]] = None
+        self._update_parent_room: Optional[Callable[[], None]] = None
         self.support_brightness = switch_info.get('BRIGHTNESS', False)
         self.support_color_temp = switch_info.get('COLORTEMP', False)
         self.support_rgb = switch_info.get('RGB', False)
+        self.support_effects = True  # Assuming effects are supported
         self.plug = switch_info.get('PLUG', False)
         self.fan = switch_info.get('FAN', False)
-
-        self._update_callback: Optional[Callable[[], None]] = None
-        self.default_controller = int(switch_info.get('switch_controller', self.hub.home_controllers[self.home_id][0]))
+        self.elements = switch_info.get('MULTIELEMENT', 1)
+        self._command_timeout = 0.5
+        self._command_retry_time = 5
 
     def register(self, update_callback) -> None:
         """Register callback, called when switch changes state."""
