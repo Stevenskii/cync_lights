@@ -191,7 +191,7 @@ class CyncHub:
         self.seq_num = 0
         self.seq_lock = threading.Lock()
 
-        self.pending_commands: Dict[int, Callable[[str], None]] = {}
+        self.pending_commands: Dict[int, Dict[str, Any]] = {}
         self.pending_commands_lock = threading.Lock()
         [room.initialize() for room in self.cync_rooms.values() if room.is_subgroup]
         [room.initialize() for room in self.cync_rooms.values() if not room.is_subgroup]
@@ -462,6 +462,71 @@ class CyncHub:
         else:
             _LOGGER.debug("Received Set CT request packet.")
             # Implement Set CT request handling if necessary
+    async def handle_pipe_subtype_17(self, is_response: bool, payload: bytes):
+        """
+        Handle Pipe Subtype 17: Acknowledgment for Set Status.
+        """
+        if is_response:
+            if len(payload) >= 6:
+                seq_num = struct.unpack(">H", payload[4:6])[0]
+                _LOGGER.debug(f"Received Pipe subtype 17 acknowledgment for sequence {seq_num}")
+                # Retrieve command info
+                command_info = self.pending_commands.get(seq_num)
+                if command_info:
+                    device = command_info['device']
+                    action = command_info['action']
+                    if action == 'turn_on':
+                        device.update_switch(state=True)
+                    elif action == 'turn_off':
+                        device.update_switch(state=False)
+                self.execute_callback(seq_num)
+            else:
+                _LOGGER.warning("Pipe subtype 17 payload too short.")
+        else:
+            _LOGGER.warning("Received unexpected Pipe subtype 17 as a request.")
+    
+    async def handle_pipe_subtype_18(self, is_response: bool, payload: bytes):
+        """
+        Handle Pipe Subtype 18: Acknowledgment for Set Luminosity.
+        """
+        if is_response:
+            if len(payload) >= 6:
+                seq_num = struct.unpack(">H", payload[4:6])[0]
+                _LOGGER.debug(f"Received Pipe subtype 18 acknowledgment for sequence {seq_num}")
+                # Retrieve command info
+                command_info = self.pending_commands.get(seq_num)
+                if command_info:
+                    device = command_info['device']
+                    action = command_info['action']
+                    brightness = command_info.get('brightness')
+                    device.update_switch(brightness=brightness)
+                self.execute_callback(seq_num)
+            else:
+                _LOGGER.warning("Pipe subtype 18 payload too short.")
+        else:
+            _LOGGER.warning("Received unexpected Pipe subtype 18 as a request.")
+    
+    async def handle_pipe_subtype_37(self, is_response: bool, payload: bytes):
+        """
+        Handle Pipe Subtype 37: Acknowledgment for Set Color Temperature.
+        """
+        if is_response:
+            if len(payload) >= 6:
+                seq_num = struct.unpack(">H", payload[4:6])[0]
+                _LOGGER.debug(f"Received Pipe subtype 37 acknowledgment for sequence {seq_num}")
+                # Retrieve command info
+                command_info = self.pending_commands.get(seq_num)
+                if command_info:
+                    device = command_info['device']
+                    action = command_info['action']
+                    color_temp_kelvin = command_info.get('color_temp_kelvin')
+                    device.update_switch(color_temp_kelvin=color_temp_kelvin)
+                self.execute_callback(seq_num)
+            else:
+                _LOGGER.warning("Pipe subtype 37 payload too short.")
+        else:
+            _LOGGER.warning("Received unexpected Pipe subtype 37 as a request.")
+    
     
     
     async def handle_pipe_get_status_paginated(self, is_response: bool, payload: bytes):
@@ -481,102 +546,159 @@ class CyncHub:
             # Implement Get Status Paginated request handling if necessary
     
     
-        def parse_status_paginated_response(self, payload: bytes) -> List[StatusPaginatedResponse]:
-            """
-            Parse the Status Paginated Response payload.
-            """
-            responses = []
+    def parse_status_paginated_response(self, payload: bytes) -> List[StatusPaginatedResponse]:
+        """
+        Parse the Status Paginated Response payload.
+        """
+        responses = []
+        try:
+            # Example parsing logic based on Go project's DecodeStatusPaginatedResponse
+            # Adjust byte offsets as per actual protocol specifications
+            # Assuming:
+            # Byte 1: Device
+            # Byte 9: IsOn
+            # Byte 13: Brightness
+            # Byte 17: CT (Color Tone)
+            # Byte 21-23: RGB
+    
+            if len(payload) < 24:
+                _LOGGER.error("Status Paginated Response payload too short.")
+                return responses
+    
+            while len(payload) >= 24:
+                device = payload[1]
+                is_on = payload[9] != 0
+                brightness = payload[13]
+                ct = payload[17]
+                use_rgb = payload[17] == 0xfe
+                rgb = (payload[21], payload[22], payload[23]) if use_rgb else (0, 0, 0)
+    
+                response = StatusPaginatedResponse(
+                    device=device,
+                    brightness=brightness,
+                    ct=ct,
+                    is_on=is_on,
+                    use_rgb=use_rgb,
+                    rgb=rgb
+                )
+                responses.append(response)
+                _LOGGER.debug(f"Parsed StatusPaginatedResponse: {response}")
+    
+                payload = payload[24:]
+        except Exception as e:
+            _LOGGER.error(f"Error parsing Status Paginated Response: {e}")
+            _LOGGER.debug("Payload:", exc_info=True)
+        return responses
+    
+    def execute_callback(self, seq_num: int):
+        """
+        Execute the callback associated with a sequence number.
+        Also, update the device state based on the action.
+        """
+        with self.pending_commands_lock:
+            command_info = self.pending_commands.pop(seq_num, None)
+    
+        if command_info:
+            callback = command_info['callback']
+            device = command_info['device']
+            action = command_info['action']
             try:
-                # Example parsing logic based on Go project's DecodeStatusPaginatedResponse
-                # Adjust byte offsets as per actual protocol specifications
-                # Assuming:
-                # Byte 1: Device
-                # Byte 9: IsOn
-                # Byte 13: Brightness
-                # Byte 17: CT (Color Tone)
-                # Byte 21-23: RGB
-    
-                if len(payload) < 24:
-                    _LOGGER.error("Status Paginated Response payload too short.")
-                    return responses
-    
-                while len(payload) >= 24:
-                    device = payload[1]
-                    is_on = payload[9] != 0
-                    brightness = payload[13]
-                    ct = payload[17]
-                    use_rgb = payload[17] == 0xfe
-                    rgb = (payload[21], payload[22], payload[23]) if use_rgb else (0, 0, 0)
-    
-                    response = StatusPaginatedResponse(
-                        device=device,
-                        brightness=brightness,
-                        ct=ct,
-                        is_on=is_on,
-                        use_rgb=use_rgb,
-                        rgb=rgb
-                    )
-                    responses.append(response)
-                    _LOGGER.debug(f"Parsed StatusPaginatedResponse: {response}")
-    
-                    payload = payload[24:]
+                callback(seq_num)  # Existing callback execution
+                _LOGGER.debug(f"Executed callback for sequence {seq_num} on device {device.device_id} for action '{action}'")
+                # Update the device state based on the action
+                if action == 'turn_on':
+                    device._state = True
+                elif action == 'turn_off':
+                    device._state = False
+                elif action == 'set_brightness':
+                    # Assuming brightness is already set in the callback
+                    pass
+                elif action == 'set_color_temp':
+                    # Assuming color_temp_kelvin is already set in the callback
+                    pass
+                elif action == 'set_rgb':
+                    # Assuming RGB is already set in the callback
+                    pass
+                else:
+                    _LOGGER.warning(f"Unknown action '{action}' for device {device.device_id}")
+                # Notify Home Assistant of the state change asynchronously
+                if device:
+                    asyncio.run_coroutine_threadsafe(device.publish_update(), self.hass.loop)
             except Exception as e:
-                _LOGGER.error(f"Error parsing Status Paginated Response: {e}")
-                _LOGGER.debug("Payload:", exc_info=True)
-            return responses
-    
-        def execute_callback(self, seq_num: int):
-            """
-            Execute the callback associated with a sequence number.
-            """
-            with self.pending_commands_lock:
-                callback = self.pending_commands.pop(seq_num, None)
-            if callback:
-                try:
-                    callback(seq_num)  # Pass as int
-                    _LOGGER.debug(f"Executed callback for sequence {seq_num}")
-                except Exception as e:
-                    _LOGGER.error(f"Error executing callback for sequence {seq_num}: {e}")
-            else:
-                _LOGGER.warning(f"No pending command found for sequence {seq_num}.")    
+                _LOGGER.error(f"Error executing callback for sequence {seq_num}: {e}")
+        else:
+            _LOGGER.warning(f"No pending command found for sequence {seq_num}.")
 
-    async def send_request(self, packet: Packet, callback: Optional[Callable[[int], None]] = None):
+
+
+    async def send_request(
+        self,
+        packet: Packet,
+        callback: Optional[Callable[[int], None]] = None,
+        device: Optional['CyncSwitch'] = None,
+        action: Optional[str] = None
+    ) -> Optional[int]:
         """
         Send a request packet to the server with an optional callback for acknowledgment.
+        Additional context: device and action.
+
+        Args:
+            packet (Packet): The packet to send.
+            callback (Optional[Callable[[int], None]]): Function to call upon acknowledgment.
+            device (Optional['CyncSwitch']): The device associated with the command.
+            action (Optional[str]): The action being performed.
+
+        Returns:
+            Optional[int]: The sequence number of the sent packet, if applicable.
         """
         if not self.logged_in or not self.writer:
             _LOGGER.error("Cannot send request: Not authenticated or writer not available.")
-            return
-    
+            return None
+
         encoded_packet = packet.encode()
         try:
             self.writer.write(encoded_packet)
             await self.writer.drain()
             _LOGGER.debug(f"Sent packet: {encoded_packet.hex()} | Packet: {packet}")
-    
-            if callback:
-                seq_num = self.extract_seq_num(packet)
-                if seq_num:
-                    with self.pending_commands_lock:
-                        self.pending_commands[seq_num] = callback
-                    _LOGGER.debug(f"Registered callback for sequence {seq_num}")
+
+            seq_num = self.extract_seq_num(packet)
+            if callback and device and action and seq_num:
+                with self.pending_commands_lock:
+                    self.pending_commands[seq_num] = {
+                        'callback': callback,
+                        'device': device,
+                        'action': action
+                    }
+                _LOGGER.debug(f"Registered callback for sequence {seq_num} with device {device.device_id} and action '{action}'")
+            return seq_num
         except Exception as e:
             _LOGGER.error(f"Error sending request: {e}")
+            _LOGGER.debug("Exception details:", exc_info=True)
+            return None
 
     def extract_seq_num(self, packet: Packet) -> Optional[int]:
         """
         Extract the sequence number from a packet.
+
+        Args:
+            packet (Packet): The packet from which to extract the sequence number.
+
+        Returns:
+            Optional[int]: The extracted sequence number, or None if extraction fails.
         """
         try:
             if packet.type != PACKET_TYPE_PIPE:
+                _LOGGER.warning(f"Packet type {packet.type} is not PIPE. Sequence number extraction skipped.")
                 return None
             # Correctly extract sequence number from bytes 4-5
             if len(packet.data) < 6:
+                _LOGGER.error("Packet data too short to extract sequence number.")
                 return None
             seq_num = struct.unpack(">H", packet.data[4:6])[0]
             return seq_num
         except Exception as e:
             _LOGGER.error(f"Error extracting sequence number: {e}")
+            _LOGGER.debug("Exception details:", exc_info=True)
             return None
 
     # Packet creation methods
@@ -704,28 +826,34 @@ class CyncHub:
         device_id: int,
         device_index: int,
         status: int,
-        callback: Optional[Callable[[str], None]] = None
+        callback: Optional[Callable[[int], None]] = None,
+        device: Optional['CyncSwitch'] = None,
+        action: Optional[str] = None
     ) -> None:
         """
         Send a Set Status command to a device.
         """
         seq_num = self.get_seq_num()
         packet = self.create_set_status_packet(device_id, seq_num, device_index, status)
-        await self.send_request(packet, callback)
+        await self.send_request(packet, callback, device=device, action=action)
+        
+
 
     async def set_device_lum(
         self,
         device_id: int,
         device_index: int,
         brightness: int,
-        callback: Optional[Callable[[str], None]] = None
+        callback: Optional[Callable[[str], None]] = None,  # Added comma
+        device: Optional['CyncSwitch'] = None,
+        action: Optional[str] = None
     ) -> None:
         """
         Send a Set Lum command to a device.
         """
         seq_num = self.get_seq_num()
         packet = self.create_set_lum_packet(device_id, seq_num, device_index, brightness)
-        await self.send_request(packet, callback)
+        await self.send_request(packet, callback, device=device, action=action)
 
     async def set_device_ct(
         self,
@@ -733,13 +861,15 @@ class CyncHub:
         device_index: int,
         ct: int,
         callback: Optional[Callable[[str], None]] = None
+        device: Optional['CyncSwitch'] = None,
+        action: Optional[str] = None
     ) -> None:
         """
         Send a Set CT command to a device.
         """
         seq_num = self.get_seq_num()
         packet = self.create_set_ct_packet(device_id, seq_num, device_index, ct)
-        await self.send_request(packet, callback)
+        await self.send_request(packet, callback, device=device, action=action)
 
     async def set_device_rgb(
         self,
@@ -749,13 +879,15 @@ class CyncHub:
         g: int,
         b: int,
         callback: Optional[Callable[[str], None]] = None
+        device: Optional['CyncSwitch'] = None,
+        action: Optional[str] = None
     ) -> None:
         """
         Send a Set RGB command to a device.
         """
         seq_num = self.get_seq_num()
         packet = self.create_set_rgb_packet(device_id, seq_num, device_index, r, g, b)
-        await self.send_request(packet, callback)
+        await self.send_request(packet, callback, device=device, action=action)
 
     async def get_device_status_paginated(
         self,
@@ -1308,7 +1440,7 @@ class CyncSwitch:
     def publish_update(self):
         """Publish the update to Home Assistant."""
         if self._update_callback:
-            self._update_callback()
+            asyncio.run_coroutine_threadsafe(self._update_callback(), self.hub.hass.loop)
 
 
 class CyncMotionSensor:
@@ -1336,8 +1468,8 @@ class CyncMotionSensor:
         self.publish_update()
 
     def publish_update(self):
-        if self._update_callback and self._hass:
-            self._hass.add_job(self._update_callback)
+        if self._update_callback:
+            asyncio.run_coroutine_threadsafe(self._update_callback(), self.hub.hass.loop)
 
 
 
@@ -1367,7 +1499,7 @@ class CyncAmbientLightSensor:
 
     def publish_update(self):
         if self._update_callback:
-            self._hass.add_job(self._update_callback)
+            asyncio.run_coroutine_threadsafe(self._update_callback(), self.hub.hass.loop)
 
 
 class CyncUserData:
