@@ -80,6 +80,10 @@ PACKET_PIPE_TYPE_SET_LUM = 0xd2
 PACKET_PIPE_TYPE_SET_CT = 0xe2
 PACKET_PIPE_TYPE_GET_STATUS = 0xdb
 PACKET_PIPE_TYPE_GET_STATUS_PAGINATED = 0x52
+# Pipe subtypes for acknowledgments
+PACKET_PIPE_SUBTYPE_ACK_SET_STATUS = 17
+PACKET_PIPE_SUBTYPE_ACK_SET_LUM = 18
+PACKET_PIPE_SUBTYPE_ACK_SET_CT = 37
 
 # Constants
 DEFAULT_TIMEOUT = 10  # seconds
@@ -389,11 +393,11 @@ class CyncHub:
         if not data:
             _LOGGER.warning("Received empty Pipe packet.")
             return
-
+    
         subtype = data[0]
         payload = data[1:]
         _LOGGER.debug(f"Pipe Subtype: {subtype}, Payload Length: {len(payload)}")
-
+    
         if subtype == PACKET_PIPE_TYPE_SET_STATUS:
             await self.handle_pipe_set_status(is_response, payload)
         elif subtype == PACKET_PIPE_TYPE_SET_LUM:
@@ -402,6 +406,12 @@ class CyncHub:
             await self.handle_pipe_set_ct(is_response, payload)
         elif subtype == PACKET_PIPE_TYPE_GET_STATUS_PAGINATED:
             await self.handle_pipe_get_status_paginated(is_response, payload)
+        elif subtype == PACKET_PIPE_SUBTYPE_ACK_SET_STATUS:
+            await self.handle_pipe_subtype_17(is_response, payload)
+        elif subtype == PACKET_PIPE_SUBTYPE_ACK_SET_LUM:
+            await self.handle_pipe_subtype_18(is_response, payload)
+        elif subtype == PACKET_PIPE_SUBTYPE_ACK_SET_CT:
+            await self.handle_pipe_subtype_37(is_response, payload)
         else:
             _LOGGER.warning(f"Unhandled Pipe subtype: {subtype}")
 
@@ -462,6 +472,7 @@ class CyncHub:
         else:
             _LOGGER.debug("Received Set CT request packet.")
             # Implement Set CT request handling if necessary
+
     async def handle_pipe_subtype_17(self, is_response: bool, payload: bytes):
         """
         Handle Pipe Subtype 17: Acknowledgment for Set Status.
@@ -470,21 +481,12 @@ class CyncHub:
             if len(payload) >= 6:
                 seq_num = struct.unpack(">H", payload[4:6])[0]
                 _LOGGER.debug(f"Received Pipe subtype 17 acknowledgment for sequence {seq_num}")
-                # Retrieve command info
-                command_info = self.pending_commands.get(seq_num)
-                if command_info:
-                    device = command_info['device']
-                    action = command_info['action']
-                    if action == 'turn_on':
-                        device.update_switch(state=True)
-                    elif action == 'turn_off':
-                        device.update_switch(state=False)
-                self.execute_callback(seq_num)
+                await self.process_acknowledgment(seq_num, action='turn_on_or_off')
             else:
                 _LOGGER.warning("Pipe subtype 17 payload too short.")
         else:
             _LOGGER.warning("Received unexpected Pipe subtype 17 as a request.")
-    
+
     async def handle_pipe_subtype_18(self, is_response: bool, payload: bytes):
         """
         Handle Pipe Subtype 18: Acknowledgment for Set Luminosity.
@@ -493,14 +495,7 @@ class CyncHub:
             if len(payload) >= 6:
                 seq_num = struct.unpack(">H", payload[4:6])[0]
                 _LOGGER.debug(f"Received Pipe subtype 18 acknowledgment for sequence {seq_num}")
-                # Retrieve command info
-                command_info = self.pending_commands.get(seq_num)
-                if command_info:
-                    device = command_info['device']
-                    action = command_info['action']
-                    brightness = command_info.get('brightness')
-                    device.update_switch(brightness=brightness)
-                self.execute_callback(seq_num)
+                await self.process_acknowledgment(seq_num, action='set_brightness')
             else:
                 _LOGGER.warning("Pipe subtype 18 payload too short.")
         else:
@@ -514,21 +509,49 @@ class CyncHub:
             if len(payload) >= 6:
                 seq_num = struct.unpack(">H", payload[4:6])[0]
                 _LOGGER.debug(f"Received Pipe subtype 37 acknowledgment for sequence {seq_num}")
-                # Retrieve command info
-                command_info = self.pending_commands.get(seq_num)
-                if command_info:
-                    device = command_info['device']
-                    action = command_info['action']
-                    color_temp_kelvin = command_info.get('color_temp_kelvin')
-                    device.update_switch(color_temp_kelvin=color_temp_kelvin)
-                self.execute_callback(seq_num)
+                await self.process_acknowledgment(seq_num, action='set_color_temp')
             else:
                 _LOGGER.warning("Pipe subtype 37 payload too short.")
         else:
             _LOGGER.warning("Received unexpected Pipe subtype 37 as a request.")
+    async def process_acknowledgment(self, seq_num: int, action: str):
+        """
+        Process the acknowledgment for a given sequence number and action.
+        """
+        with self.pending_commands_lock:
+            command_info = self.pending_commands.pop(seq_num, None)
     
+        if command_info:
+            callback = command_info['callback']
+            device = command_info['device']
+            _LOGGER.debug(f"Executing callback for sequence {seq_num} on device {device.device_id} for action '{action}'")
+            try:
+                # Invoke the callback
+                if callback:
+                    callback(seq_num)
     
+                # Update device state based on action
+                if action == 'turn_on_or_off':
+                    # Determine desired state from the command
+                    desired_state = command_info.get('desired_state', False)
+                    device.update_switch(state=desired_state)
+                elif action == 'set_brightness':
+                    brightness = command_info.get('brightness')
+                    device.update_switch(brightness=brightness)
+                elif action == 'set_color_temp':
+                    color_temp_kelvin = command_info.get('color_temp_kelvin')
+                    device.update_switch(color_temp_kelvin=color_temp_kelvin)
+                else:
+                    _LOGGER.warning(f"Unknown action '{action}' for device {device.device_id}")
     
+                # Notify Home Assistant of the state change asynchronously
+                if device:
+                    asyncio.run_coroutine_threadsafe(device.publish_update(), self.hass.loop)
+            except Exception as e:
+                _LOGGER.error(f"Error executing callback for sequence {seq_num}: {e}")
+        else:
+            _LOGGER.warning(f"No pending command found for sequence {seq_num}.")
+
     async def handle_pipe_get_status_paginated(self, is_response: bool, payload: bytes):
         """
         Handle Get Status Paginated pipe packets.
