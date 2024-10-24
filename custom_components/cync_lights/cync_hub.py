@@ -228,7 +228,10 @@ class CyncHub:
     
                 # Wait for the read_tcp_messages task to complete
                 await read_tcp_messages
-
+            except Exception as e:
+                _LOGGER.error(f"Exception in connect(): {type(e).__name__}: {e}")
+                _LOGGER.debug("Traceback:", exc_info=True)
+                await asyncio.sleep(5)  # Retry connection after a delay if an error occurs
 
     async def read_tcp_messages(self) -> None:
         """Continuously read and process TCP messages from the server."""
