@@ -256,7 +256,6 @@ class CyncHub:
             except Exception as e:
                 _LOGGER.error(f"Error while reading TCP messages: {e}")
                 await asyncio.sleep(5)
-        raise ShuttingDown
 
     async def handle_packet(self, packet_type: int, is_response: bool, data: bytes) -> None:
         """Handle packet based on type."""
