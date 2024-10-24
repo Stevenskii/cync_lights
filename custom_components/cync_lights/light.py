@@ -35,7 +35,7 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
     entities = []
     for device_id, cync_switch in hub.cync_switches.items():
         if cync_switch and not cync_switch.plug:  # Only add lights that are not plugs
-            entities.append(CyncLightEntity(cync_switch))
+            entities.append(CyncSwitchEntity(cync_switch))
 
     async_add_entities(entities, update_before_add=True)
 
