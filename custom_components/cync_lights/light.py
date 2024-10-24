@@ -231,4 +231,3 @@ class CyncSwitchEntity(LightEntity):
             await self.cync_switch.turn_off(flash=flash, transition=transition)
         except Exception as e:
             _LOGGER.error("Error turning off light %s: %s", self.name, e)
-
