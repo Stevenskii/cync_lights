@@ -160,6 +160,7 @@ class CyncHub:
         self.home_controllers = data['cync_config']['home_controllers']
         self.switchID_to_homeID = data['cync_config']['switchID_to_homeID']
 
+        self.effect_mapping = self._parse_light_shows(data['cync_config'])
         # Handle device initialization directly (no rooms)
         self.cync_switches = {
             device_id: CyncSwitch(device_id, switch_info, self)
@@ -192,6 +193,7 @@ class CyncHub:
 
         # Schedule the connect method
         self.hass.loop.create_task(self.connect())
+
 
     def get_seq_num(self):
         """Thread-safe method to get the next sequence number."""
