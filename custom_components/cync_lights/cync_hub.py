@@ -844,7 +844,7 @@ class CyncHub:
         device_id: int,
         device_index: int,
         brightness: int,
-        callback: Optional[Callable[[str], None]] = None,  # Added comma
+        callback: Optional[Callable[[str], None]] = None,
         device: Optional['CyncSwitch'] = None,
         action: Optional[str] = None
     ) -> None:
@@ -860,7 +860,7 @@ class CyncHub:
         device_id: int,
         device_index: int,
         ct: int,
-        callback: Optional[Callable[[str], None]] = None
+        callback: Optional[Callable[[str], None]] = None,
         device: Optional['CyncSwitch'] = None,
         action: Optional[str] = None
     ) -> None:
@@ -878,7 +878,7 @@ class CyncHub:
         r: int,
         g: int,
         b: int,
-        callback: Optional[Callable[[str], None]] = None
+        callback: Optional[Callable[[str], None]] = None,
         device: Optional['CyncSwitch'] = None,
         action: Optional[str] = None
     ) -> None:
