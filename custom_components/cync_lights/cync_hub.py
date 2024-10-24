@@ -161,7 +161,8 @@ class CyncHub:
         self.switchID_to_homeID = data['cync_config']['switchID_to_homeID']
 
         self.effect_mapping = self._parse_light_shows(data['cync_config'])
-        # Handle device initialization directly (no rooms)
+        # Handle device initialization directly (rooms only for suggested area)
+        self.cync_rooms = {room_id:CyncRoom(room_id,room_info,self) for room_id,room_info in data['cync_config']['rooms'].items()}
         self.cync_switches = {
             device_id: CyncSwitch(device_id, switch_info, self)
             for device_id, switch_info in data['cync_config']['devices'].items() if switch_info.get("ONOFF", False)
