@@ -175,25 +175,30 @@ class CyncHub:
         else:
             self.ssl_context = None
 
-    async def connect(self) -> None:
-        """Establish TCP connection and authenticate."""
+    async def connect(self):
+        """
+        Establish TCP connection and authenticate, with retries and task management.
+        """
+        _LOGGER.debug("CyncHub connect() method called.")
         while not self.shutting_down:
             try:
-                # Setting up SSL context if required
-                await self.setup_ssl_context()
-    
-                # Attempt to connect with SSL if enabled
-                if self.use_ssl:
-                    _LOGGER.debug(f"Attempting to connect with SSL to {self.host}:{self.port}")
-                    self.reader, self.writer = await asyncio.open_connection(
-                        self.host, self.port, ssl=self.ssl_context
-                    )
-                else:
-                    _LOGGER.debug(f"Attempting to connect without SSL to {self.host}:{DEFAULT_PORT}")
-                    self.reader, self.writer = await asyncio.open_connection(
-                        self.host, DEFAULT_PORT
-                    )
-    
+                await self.setup_ssl_context()  # Setup SSL context asynchronously
+                
+                # Attempt to establish a secure connection
+                try:
+                    _LOGGER.debug("Trying to establish SSL connection on port 23779.")
+                    self.reader, self.writer = await asyncio.open_connection(self.host, self.port, ssl=self.ssl_context)
+                except Exception:
+                    _LOGGER.warning("SSL connection failed. Retrying with SSL context check disabled.")
+                    if self.ssl_context:
+                        self.ssl_context.check_hostname = False
+                        self.ssl_context.verify_mode = ssl.CERT_NONE
+                    try:
+                        self.reader, self.writer = await asyncio.open_connection(self.host, self.port, ssl=self.ssl_context)
+                    except Exception:
+                        _LOGGER.warning("SSL context failed. Falling back to unsecured connection.")
+                        self.reader, self.writer = await asyncio.open_connection(self.host, 23778)
+                
                 _LOGGER.debug("TCP connection established.")
     
                 # Send login code
@@ -206,22 +211,23 @@ class CyncHub:
                 _LOGGER.debug(f"Login response: {login_response.hex()}")
     
                 if not login_response:
+                    _LOGGER.error("Authentication failed: no response from server")
                     raise Exception("Authentication failed: no response from server")
-                
-                # Process login response and check authentication
+    
+                # Process login response
                 if login_response.startswith(b'\x18\x00\x00\x00\x02\x00\x00'):
                     self.logged_in = True
                     _LOGGER.info("Successfully authenticated with the server.")
                 else:
-                    raise Exception(f"Authentication failed with response: {login_response.hex()}")
+                    _LOGGER.error(f"Authentication failed with response data: {login_response.hex()}")
+                    raise Exception("Authentication failed with response data.")
     
-                # Start reading TCP messages
-                await self.read_tcp_messages()
+                # Create tasks for handling TCP messages and other maintenance tasks
+                read_tcp_messages = asyncio.create_task(self.read_tcp_messages(), name="Read TCP Messages")
+                # Additional tasks can be added here if needed
     
-            except Exception as e:
-                _LOGGER.error(f"Connection error: {e}")
-                _LOGGER.debug("Traceback:", exc_info=True)
-                await asyncio.sleep(5)  # Retry connection after a delay
+                # Wait for the read_tcp_messages task to complete
+                await read_tcp_messages
 
 
     async def read_tcp_messages(self) -> None:
