@@ -740,107 +740,146 @@ class CyncHub:
 
     # Packet creation methods
     def create_set_status_packet(self, controller_id: int, seq: int, device_index: int, status: int) -> Packet:
-        # Device ID (Controller ID): 4 bytes, big-endian
-        device_id_bytes = controller_id.to_bytes(4, 'big')
-        # Sequence Number: 2 bytes, big-endian
-        seq_num_bytes = struct.pack(">H", seq)
-        # Additional fixed bytes
-        fixed_bytes = bytes([0x00]) + struct.pack(">H", 0x7e00) + bytes([1, 0, 0, 0xf8])
-        # Subtype: 1 byte
-        subtype_byte = PACKET_PIPE_TYPE_SET_STATUS.to_bytes(1, 'big')
-        # Payload: device_index (2 bytes, big-endian), status (1 byte)
-        payload = struct.pack(">H", device_index) + bytes([status])
-        # Payload Length: 1 byte
-        payload_length = len(payload).to_bytes(1, 'big')
-        # Combine all parts and add padding
-        data = device_id_bytes + seq_num_bytes + fixed_bytes + subtype_byte + payload_length + payload + bytes([0x00, 0x00, 0x00])
-
-        packet = Packet(
-            packet_type=PACKET_TYPE_PIPE,
-            is_response=False,
-            data=data
-        )
-        _LOGGER.debug(f"Created Set Status Packet: {packet}")
-        return packet
-
-
-
-    def create_set_lum_packet(self, controller_id: int, seq: int, device_index: int, brightness: int) -> Packet:
-        if brightness < 1 or brightness > 100:
-            raise ValueError("Brightness must be between 1 and 100.")
-        # Device ID: 4 bytes, big-endian
-        device_id_bytes = controller_id.to_bytes(4, 'big')
-        # Sequence Number: 2 bytes, big-endian
-        seq_num_bytes = struct.pack(">H", seq)
-        # Additional fixed bytes
-        fixed_bytes = bytes([0x00]) + struct.pack(">H", 0x7e00) + bytes([1, 0, 0, 0xf8])
-        # Subtype: 1 byte
-        subtype_byte = PACKET_PIPE_TYPE_SET_LUM.to_bytes(1, 'big')
-        # Payload: device_index (2 bytes, big-endian), command-specific data
-        payload = struct.pack(">H", device_index) + bytes([brightness])
-        # Payload Length: 1 byte
-        payload_length = len(payload).to_bytes(1, 'big')
-        # Combine all parts
-        data = device_id_bytes + seq_num_bytes + fixed_bytes + subtype_byte + payload_length + payload + bytes([0x00, 0x00, 0x00])
+        # Packet structure similar to cync-lan's CMD_TURN_ON
+        data = bytearray()
         
-        packet = Packet(
-            packet_type=PACKET_TYPE_PIPE,
-            is_response=False,
-            data=data
-        )
-        _LOGGER.debug(f"Created Set Lum Packet: {packet}")
-        return packet
-
+        # Packet Type for 'set status'
+        data.extend(struct.pack(">B", PACKET_TYPE_REQUEST))  # Packet Type (e.g., 0x73 for status)
+    
+        # Zero padding (could be flags or reserved bytes in certain implementations)
+        data.extend(bytes([0x00, 0x00, 0x00]))
+    
+        # Packet Length (based on cync-lan, set accordingly)
+        data.extend(struct.pack(">B", 0x1f))
+    
+        # Status Command (turn on or off, matches cync-lan's byte 0x01 or 0x00)
+        data.extend(struct.pack(">B", status))
+    
+        # Device-specific information (controller ID, sequence number, etc.)
+        data.extend(struct.pack(">I H", controller_id, seq))
+    
+        # Device-specific mesh ID or similar identifier (this is important for addressing)
+        data.extend(struct.pack(">H", device_index))
+    
+        # Add fixed segment based on cync-lan (e.g., similar to '0x7e...' section in cync-lan)
+        data.extend(bytes([0x7e, 0x00, 0x00, 0x00]))
+    
+        # Additional status-related bytes (e.g., flags, padding, etc.)
+        data.extend(struct.pack(">I", 0xf8d00d))  # Example from cync-lan
+    
+        # Final status byte (turn off = 0x00, turn on = 0x01)
+        data.extend(struct.pack(">B", status))
+    
+        # Return the constructed packet
+        return Packet(PACKET_TYPE_PIPE, False, bytes(data))
+ 
+    def create_set_brightness_packet(self, controller_id: int, seq: int, device_index: int, brightness: int) -> Packet:
+        # Similar to cync-lan's CMD_SET_BRIGHTNESS
+        data = bytearray()
+        
+        # Packet Type for brightness
+        data.extend(struct.pack(">B", PACKET_PIPE_TYPE_SET_LUM))
+        
+        # Zero padding (could be flags or reserved bytes in certain implementations)
+        data.extend(bytes([0x00, 0x00, 0x00]))
+        
+        # Packet Length (e.g., 0x1d based on cync-lan)
+        data.extend(struct.pack(">B", 0x1d))
+        
+        # Brightness Command (0x02 for brightness as seen in cync-lan)
+        data.extend(struct.pack(">B", 0x02))
+        
+        # Brightness Value
+        data.extend(struct.pack(">B", brightness))
+        
+        # Device-specific information (controller ID, sequence number, etc.)
+        data.extend(struct.pack(">I H", controller_id, seq))
+        
+        # Device Index/Mesh ID
+        data.extend(struct.pack(">H", device_index))
+        
+        # Add fixed segment (e.g., similar to cync-lan '0x7e...' section)
+        data.extend(bytes([0x7e, 0x00, 0x00, 0x00]))
+        
+        # Final brightness byte (duplicated for consistency, similar to cync-lan)
+        data.extend(struct.pack(">B", brightness))
+        
+        # Return the constructed packet
+        return Packet(PACKET_TYPE_PIPE, False, bytes(data))
     
     def create_set_ct_packet(self, controller_id: int, seq: int, device_index: int, ct: int) -> Packet:
         if ct < 0 or ct > 100:
             raise ValueError("Color tone must be between 0 and 100.")
+        
         # Device ID: 4 bytes, big-endian
         device_id_bytes = controller_id.to_bytes(4, 'big')
+        
         # Sequence Number: 2 bytes, big-endian
         seq_num_bytes = struct.pack(">H", seq)
+        
         # Additional fixed bytes
         fixed_bytes = bytes([0x00]) + struct.pack(">H", 0x7e00) + bytes([1, 0, 0, 0xf8])
+        
         # Subtype: 1 byte
         subtype_byte = PACKET_PIPE_TYPE_SET_CT.to_bytes(1, 'big')
+        
         # Payload: device_index (2 bytes, big-endian), command-specific data
         payload = struct.pack(">H", device_index) + bytes([0x05, ct])
+        
         # Payload Length: 1 byte
         payload_length = len(payload).to_bytes(1, 'big')
+        
         # Combine all parts
         data = device_id_bytes + seq_num_bytes + fixed_bytes + subtype_byte + payload_length + payload + bytes([0x00, 0x00, 0x00])
         
-        packet = Packet(
-            packet_type=PACKET_TYPE_PIPE,
-            is_response=False,
-            data=data
-        )
-        _LOGGER.debug(f"Created Set CT Packet: {packet}")
-        return packet
+        return Packet(PACKET_TYPE_PIPE, False, bytes(data))
     
     def create_set_rgb_packet(self, controller_id: int, seq: int, device_index: int, r: int, g: int, b: int) -> Packet:
-        # Device ID: 4 bytes, big-endian
-        device_id_bytes = controller_id.to_bytes(4, 'big')
-        # Sequence Number: 2 bytes, big-endian
-        seq_num_bytes = struct.pack(">H", seq)
-        # Additional fixed bytes
-        fixed_bytes = bytes([0x00]) + struct.pack(">H", 0x7e00) + bytes([1, 0, 0, 0xf8])
-        # Subtype: 1 byte (Assuming CT subtype for RGB as per Go API)
-        subtype_byte = PACKET_PIPE_TYPE_SET_CT.to_bytes(1, 'big')
-        # Payload: device_index (2 bytes, big-endian), command-specific data
-        payload = struct.pack(">H", device_index) + bytes([0x04, r, g, b])
-        # Payload Length: 1 byte
-        payload_length = len(payload).to_bytes(1, 'big')
-        # Combine all parts
-        data = device_id_bytes + seq_num_bytes + fixed_bytes + subtype_byte + payload_length + payload + bytes([0x00, 0x00, 0x00])
+        # Similar to cync-lan's CMD_SET_COLOR
+        data = bytearray()
         
-        packet = Packet(
-            packet_type=PACKET_TYPE_PIPE,
-            is_response=False,
-            data=data
-        )
-        _LOGGER.debug(f"Created Set RGB Packet: {packet}")
-        return packet
+        # Packet Type for RGB color
+        data.extend(struct.pack(">B", PACKET_PIPE_TYPE_SET_RGB))
+        
+        # Zero padding
+        data.extend(bytes([0x00, 0x00, 0x00]))
+        
+        # Packet Length (0x20 based on cync-lan)
+        data.extend(struct.pack(">B", 0x20))
+        
+        # RGB Command (0x04)
+        data.extend(struct.pack(">B", 0x04))
+        
+        # Red, Green, and Blue values
+        data.extend(struct.pack(">BBB", r, g, b))
+        
+        # Device-specific information
+        data.extend(struct.pack(">I H", controller_id, seq))
+        
+        # Device Mesh ID or Index
+        data.extend(struct.pack(">H", device_index))
+        
+        # Fixed section from cync-lan
+        data.extend(bytes([0x7e, 0x00, 0x00, 0x00]))
+        
+        # Padding/flags for RGB
+        data.extend(struct.pack(">I", 0xf8e20e))
+        
+        return Packet(PACKET_TYPE_PIPE, False, bytes(data))
+
+    def create_ping_packet(self) -> Packet:
+        # Similar to cync-lan's CLIENT_HEARTBEAT
+        data = bytearray()
+    
+        # Packet Type for ping (0xd3 in this case)
+        data.extend(struct.pack(">B", PACKET_TYPE_PING))
+    
+        # Zero padding (matches cync-lan)
+        data.extend(bytes([0x00, 0x00, 0x00, 0x00]))
+    
+        # Return the constructed packet
+        return Packet(PACKET_TYPE_PING, False, bytes(data))
+
     
     def create_get_status_paginated_packet(self, device_id: int, seq: int) -> Packet:
         data = bytearray([
@@ -889,7 +928,7 @@ class CyncHub:
         Send a Set Lum command to a device.
         """
         seq_num = self.get_seq_num()
-        packet = self.create_set_lum_packet(device_id, seq_num, device_index, brightness)
+        packet = self.create_set_brightness_packet(device_id, seq_num, device_index, brightness)
         await self.send_request(packet, callback, device=device, action=action)
 
     async def set_device_ct(
@@ -1085,7 +1124,7 @@ class CyncRoom:
             # Send Set Brightness with unique seq_num and correct device_index
             if self.support_brightness:
                 seq_brightness = self.hub.get_seq_num()
-                brightness_packet = self.hub.create_set_lum_packet(
+                brightness_packet = self.hub.create_set_brightness_packet(
                     controller,
                     seq_brightness,
                     device_index=self.mesh_id_int,  # Use mesh_id_int
@@ -1372,7 +1411,7 @@ class CyncSwitch:
             # Send Set Brightness with unique seq_num
             if self.support_brightness:
                 seq_brightness = self.hub.get_seq_num()
-                brightness_packet = self.hub.create_set_lum_packet(controller, seq_brightness, self.mesh_id_int, brightness_value)
+                brightness_packet = self.hub.create_set_brightness_packet(controller, seq_brightness, self.mesh_id_int, brightness_value)
                 await self.hub.send_request(brightness_packet, self.command_received)
     
             # Send Set Color Temperature with unique seq_num
