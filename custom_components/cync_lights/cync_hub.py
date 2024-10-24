@@ -179,23 +179,50 @@ class CyncHub:
         """Establish TCP connection and authenticate."""
         while not self.shutting_down:
             try:
+                # Setting up SSL context if required
                 await self.setup_ssl_context()
-                self.reader, self.writer = await asyncio.open_connection(self.host, self.port, ssl=self.ssl_context)
-                _LOGGER.debug(f"TCP connection established at {self.host}:{self.port}")
-
+    
+                # Attempt to connect with SSL if enabled
+                if self.use_ssl:
+                    _LOGGER.debug(f"Attempting to connect with SSL to {self.host}:{self.port}")
+                    self.reader, self.writer = await asyncio.open_connection(
+                        self.host, self.port, ssl=self.ssl_context
+                    )
+                else:
+                    _LOGGER.debug(f"Attempting to connect without SSL to {self.host}:{DEFAULT_PORT}")
+                    self.reader, self.writer = await asyncio.open_connection(
+                        self.host, DEFAULT_PORT
+                    )
+    
+                _LOGGER.debug("TCP connection established.")
+    
+                # Send login code
                 self.writer.write(self.login_code)
                 await self.writer.drain()
+                _LOGGER.debug(f"Sent login code: {self.login_code.hex()}")
+    
+                # Await login response
                 login_response = await self.reader.read(1000)
-
-                if not login_response.startswith(b'\x18\x00\x00\x00\x02\x00\x00'):
-                    raise Exception("Authentication failed")
-
-                self.logged_in = True
-                _LOGGER.info("Successfully authenticated with the server.")
+                _LOGGER.debug(f"Login response: {login_response.hex()}")
+    
+                if not login_response:
+                    raise Exception("Authentication failed: no response from server")
+                
+                # Process login response and check authentication
+                if login_response.startswith(b'\x18\x00\x00\x00\x02\x00\x00'):
+                    self.logged_in = True
+                    _LOGGER.info("Successfully authenticated with the server.")
+                else:
+                    raise Exception(f"Authentication failed with response: {login_response.hex()}")
+    
+                # Start reading TCP messages
                 await self.read_tcp_messages()
+    
             except Exception as e:
                 _LOGGER.error(f"Connection error: {e}")
-                await asyncio.sleep(5)
+                _LOGGER.debug("Traceback:", exc_info=True)
+                await asyncio.sleep(5)  # Retry connection after a delay
+
 
     async def read_tcp_messages(self) -> None:
         """Continuously read and process TCP messages from the server."""
