@@ -189,14 +189,14 @@ class CyncHub:
                     _LOGGER.debug("Trying to establish SSL connection on port 23779.")
                     self.reader, self.writer = await asyncio.open_connection(self.host, self.port, ssl=self.ssl_context)
                 except Exception:
-                    _LOGGER.warning("SSL connection failed. Retrying with SSL context check disabled.")
+                    _LOGGER.debug("SSL connection failed. Retrying with SSL context check disabled.")
                     if self.ssl_context:
                         self.ssl_context.check_hostname = False
                         self.ssl_context.verify_mode = ssl.CERT_NONE
                     try:
                         self.reader, self.writer = await asyncio.open_connection(self.host, self.port, ssl=self.ssl_context)
                     except Exception:
-                        _LOGGER.warning("SSL context failed. Falling back to unsecured connection.")
+                        _LOGGER.debug("SSL context failed. Falling back to unsecured connection.")
                         self.reader, self.writer = await asyncio.open_connection(self.host, 23778)
                 
                 _LOGGER.debug("TCP connection established.")
@@ -217,7 +217,7 @@ class CyncHub:
                 # Process login response
                 if login_response.startswith(b'\x18\x00\x00\x00\x02\x00\x00'):
                     self.logged_in = True
-                    _LOGGER.info("Successfully authenticated with the server.")
+                    _LOGGER.debug("Successfully authenticated with the server.")
                 else:
                     _LOGGER.error(f"Authentication failed with response data: {login_response.hex()}")
                     raise Exception("Authentication failed with response data.")
