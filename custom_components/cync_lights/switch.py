@@ -16,25 +16,16 @@ from .cync_hub import CyncHub, CyncSwitch
 _LOGGER = logging.getLogger(__name__)
 
 
-async def async_setup_entry(
-    hass: HomeAssistant,
-    config_entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
-) -> None:
-    """Set up Cync switches from a config entry."""
-    hub: CyncHub = hass.data[DOMAIN][config_entry.entry_id]
+async def async_setup_entry(hass, config_entry, async_add_entities):
+    hub = hass.data[DOMAIN][config_entry.entry_id]
 
-    new_devices = []
-    for switch_id, cync_switch in hub.cync_switches.items():
-        if (
-            not cync_switch._update_callback
-            and cync_switch.plug
-            and switch_id in config_entry.options.get("switches", [])
-        ):
-            new_devices.append(CyncPlugEntity(cync_switch))
+    entities = []
+    for device_id, cync_switch in hub.cync_switches.items():
+        if cync_switch and cync_switch.plug:  # Only add plugs
+            entities.append(CyncSwitchEntity(cync_switch))
 
-    if new_devices:
-        async_add_entities(new_devices)
+    async_add_entities(entities, update_before_add=True)
+
 
 
 class CyncPlugEntity(SwitchEntity):

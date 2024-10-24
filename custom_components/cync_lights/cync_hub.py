@@ -865,12 +865,16 @@ class CyncSwitch:
         self.brightness = 0
         self.color_temp_kelvin = 0
         self.rgb = {'r': 0, 'g': 0, 'b': 0, 'active': False}
+        
+        # Initialize support for capabilities, including plug and fan
         self.support_brightness = switch_info.get('BRIGHTNESS', False)
         self.support_color_temp = switch_info.get('COLORTEMP', False)
         self.support_rgb = switch_info.get('RGB', False)
+        self.plug = switch_info.get('PLUG', False)
+        self.fan = switch_info.get('FAN', False)
+
         self._update_callback: Optional[Callable[[], None]] = None
         self.default_controller = int(switch_info.get('switch_controller', self.hub.home_controllers[self.home_id][0]))
-
 
     def register(self, update_callback) -> None:
         """Register callback, called when switch changes state."""

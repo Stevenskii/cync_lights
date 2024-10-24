@@ -29,29 +29,15 @@ from .cync_hub import CyncHub, CyncSwitch
 _LOGGER = logging.getLogger(__name__)
 
 
-async def async_setup_entry(
-    hass: HomeAssistant,
-    config_entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
-) -> None:
-    """Set up Cync light entities from a config entry."""
-    hub: CyncHub = hass.data[DOMAIN][config_entry.entry_id]
+async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, async_add_entities: AddEntitiesCallback):
+    hub = hass.data[DOMAIN][config_entry.entry_id]
 
-    new_switches = []
-    config_switches = config_entry.options.get("switches", {})
+    entities = []
+    for device_id, cync_switch in hub.cync_switches.items():
+        if cync_switch and not cync_switch.plug:  # Only add lights that are not plugs
+            entities.append(CyncLightEntity(cync_switch))
 
-    # Add individual switch entities
-    for switch_id, cync_switch in hub.cync_switches.items():
-        if (
-            not cync_switch._update_callback
-            and not cync_switch.plug
-            and not cync_switch.fan
-            and switch_id in config_switches
-        ):
-            new_switches.append(CyncSwitchEntity(cync_switch))
-
-    if new_switches:
-        async_add_entities(new_switches)
+    async_add_entities(entities, update_before_add=True)
 
 
 class CyncSwitchEntity(LightEntity):
