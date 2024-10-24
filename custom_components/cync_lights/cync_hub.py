@@ -515,7 +515,7 @@ class CyncHub:
         else:
             _LOGGER.warning("Received unexpected Pipe subtype 37 as a request.")
 
-        async def process_acknowledgment(self, ack_seq_num: int, action: str):
+    async def process_acknowledgment(self, ack_seq_num: int, action: str):
         """
         Process the acknowledgment for a given ack_seq_num and action.
         """
