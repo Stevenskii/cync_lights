@@ -155,37 +155,26 @@ class CyncHub:
         self.login_code = bytearray(data['cync_credentials'])
         self.use_ssl = options.get("use_ssl", True)
 
-        # Initialize device attributes
+        # Initialize device attributes (no more room-based management)
         self.home_devices = data['cync_config']['home_devices']
         self.home_controllers = data['cync_config']['home_controllers']
         self.switchID_to_homeID = data['cync_config']['switchID_to_homeID']
-        self.connected_devices = {home_id: [] for home_id in self.home_controllers.keys()}
-        self.shutting_down = False
-        # Remove the room initialization part
+
+        # Handle device initialization directly (no rooms)
         self.cync_switches = {
             device_id: CyncSwitch(device_id, switch_info, self)
             for device_id, switch_info in data['cync_config']['devices'].items() if switch_info.get("ONOFF", False)
         }
-        
         self.cync_motion_sensors = {
             device_id: CyncMotionSensor(device_id, device_info)
             for device_id, device_info in data['cync_config']['devices'].items() if device_info.get("MOTION", False)
         }
-        
         self.cync_ambient_light_sensors = {
             device_id: CyncAmbientLightSensor(device_id, device_info)
             for device_id, device_info in data['cync_config']['devices'].items() if device_info.get("AMBIENT_LIGHT", False)
         }
 
-        self.switchID_to_deviceIDs = {
-            device_info.switch_id: [dev_id for dev_id, dev_info in self.cync_switches.items() if dev_info.switch_id == device_info.switch_id]
-            for device_id, device_info in self.cync_switches.items() if int(device_info.switch_id) > 0
-        }
-        self.connected_devices_updated = False
-        self.effect_mapping = self._parse_light_shows(data['cync_config'])
-        [room.initialize() for room in self.cync_rooms.values() if room.is_subgroup]
-        [room.initialize() for room in self.cync_rooms.values() if not room.is_subgroup]
-
+        # Initialize other attributes and connection setup (no room logic)
         self.ssl_context: Optional[ssl.SSLContext] = None
         self.reader: Optional[asyncio.StreamReader] = None
         self.writer: Optional[asyncio.StreamWriter] = None
@@ -200,9 +189,7 @@ class CyncHub:
 
         self.pending_commands: Dict[int, Dict[str, Any]] = {}
         self.pending_commands_lock = threading.Lock()
-        [room.initialize() for room in self.cync_rooms.values() if room.is_subgroup]
-        [room.initialize() for room in self.cync_rooms.values() if not room.is_subgroup]
-    
+
         # Schedule the connect method
         self.hass.loop.create_task(self.connect())
 
