@@ -69,10 +69,6 @@ class InvalidCyncConfiguration(Exception):
     """Cync configuration is not supported"""
 
 # Packet types (from cync-lan)
-PACKET_TYPE_AUTH = 1
-PACKET_TYPE_SYNC = 4
-PACKET_TYPE_PIPE = 7
-PACKET_TYPE_PIPE_SYNC = 8
 PACKET_TYPE_REQUEST = 0x73  # Status and brightness request
 PACKET_TYPE_PING = 0xD3  # Heartbeat/Ping packet type
 
@@ -243,6 +239,17 @@ class CyncHub:
             except Exception as e:
                 _LOGGER.error(f"Error while reading TCP messages: {e}")
                 await asyncio.sleep(5)
+                
+    async def handle_packet(self, packet_type: int, is_response: bool, packet_data: bytes) -> None:
+        """Handle incoming packets based on their type."""
+        if packet_type == PACKET_TYPE_PING:
+            _LOGGER.debug("Received PING packet.")
+            # Optionally, respond to the PING if necessary
+        elif packet_type == PACKET_TYPE_REQUEST:
+            _LOGGER.debug("Received PIPE packet.")
+            await self.process_pipe_packet(is_response, packet_data)
+        else:
+            _LOGGER.warning(f"Unhandled packet type: {packet_type}")
 
     async def process_pipe_packet(self, is_response: bool, data: bytes) -> None:
         """Process PIPE packets."""
@@ -275,7 +282,7 @@ class CyncHub:
 
     def extract_seq_num(self, packet: Packet) -> Optional[int]:
         """Extract sequence number from a packet."""
-        if packet.type != PACKET_TYPE_PIPE or len(packet.data) < 6:
+        if packet.type != PACKET_TYPE_REQUEST or len(packet.data) < 6:
             return None
         return struct.unpack(">H", packet.data[4:6])[0]
 
@@ -293,7 +300,7 @@ class CyncHub:
     #    data.extend(struct.pack(">I", 0xf8d00d))  # Additional status-related bytes
     #    data.extend(struct.pack(">B", status))  # Final status byte
     #    _LOGGER.debug(f"Set Status Packet Data: {data.hex()}")
-    #    return Packet(PACKET_TYPE_PIPE, False, bytes(data))
+    #    return Packet(PACKET_TYPE_REQUEST, False, bytes(data))
     def create_set_status_packet(self, controller_id: int, seq: int, device_index: int, status: int) -> Packet:
         # Ensure controller_id is within the valid range
         if not (0 <= controller_id <= 0xFFFFFFFF):
