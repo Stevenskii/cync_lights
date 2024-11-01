@@ -156,7 +156,7 @@ class CyncHub:
 
     async def get_seq_num(self) -> int:
         """Thread-safe method to get the next sequence number."""
-        with self.seq_lock:
+        async with self.seq_lock:
             self.seq_num = (self.seq_num + 1) % 65536
             return self.seq_num
 
