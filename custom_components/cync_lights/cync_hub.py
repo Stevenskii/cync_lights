@@ -107,20 +107,6 @@ class Packet:
         header = struct.pack(">B I", type_byte, length)
         return header + self.data
 
-    @staticmethod
-    def decode(raw_data: bytes) -> 'Packet':
-        """Decode raw binary data into a Packet object."""
-        if len(raw_data) < 5:
-            raise ValueError("Insufficient data for header")
-        type_byte = raw_data[0]
-        packet_type = type_byte >> 4
-        is_response = (type_byte & 8) != 0
-        length = struct.unpack(">I", raw_data[1:5])[0]
-        if len(raw_data) < 5 + length:
-            raise ValueError("Insufficient data for payload")
-        data = raw_data[5:5 + length]
-        return Packet(packet_type, is_response, data)
-
     def __str__(self):
         return f"Packet(type={self.type}, response={self.is_response}, data={self.data.hex()})"
 
@@ -257,15 +243,17 @@ class CyncHub:
                 _LOGGER.error(f"Error while reading TCP messages: {e}")
                 await asyncio.sleep(5)
 
-    async def handle_packet(self, packet_type: int, is_response: bool, data: bytes) -> None:
-        """Handle packet based on type."""
-        try:
-            if packet_type == PACKET_TYPE_PIPE:
-                await self.process_pipe_packet(is_response, data)
+    async def process_pipe_packet(self, is_response: bool, data: bytes) -> None:
+        """Process PIPE packets."""
+        if is_response:
+            if len(data) >= 6:
+                seq_num = struct.unpack(">H", data[4:6])[0]
+                _LOGGER.debug(f"Acknowledgment received for sequence {seq_num}")
+                self.execute_callback(seq_num)
             else:
-                _LOGGER.warning(f"Unhandled packet type: {packet_type}")
-        except Exception as e:
-            _LOGGER.error(f"Error handling packet: {e}")
+                _LOGGER.error("Invalid acknowledgment packet")
+        else:
+            _LOGGER.warning("Unhandled PIPE request received")
 
     async def process_pipe_packet(self, is_response: bool, data: bytes) -> None:
         """Process PIPE packets."""
@@ -283,7 +271,7 @@ class CyncHub:
         """Execute the callback associated with the sequence number."""
         with self.pending_commands_lock:
             command_info = self.pending_commands.pop(seq_num, None)
-
+    
         if command_info:
             callback = command_info.get('callback')
             if callback:
@@ -347,7 +335,7 @@ class CyncHub:
     
         _LOGGER.debug(f"Set Status Packet Data: {data.hex()}")
         _LOGGER.debug(f"Controller ID: {controller_id}, Seq: {seq}, Device Index: {device_index}, Status: {status}")
-        return Packet(PACKET_TYPE_REQUEST, False, data)
+        return Packet(PACKET_TYPE_REQUEST, False, data, seq)
 
     def create_set_brightness_packet(self, controller_id: int, seq: int, device_index: int, brightness: int) -> Packet:
         # Ensure brightness is within 0 to 100
@@ -371,7 +359,7 @@ class CyncHub:
         )
     
         _LOGGER.debug(f"Set Brightness Packet Data: {data.hex()}")
-        return Packet(PACKET_TYPE_REQUEST, False, data)
+        return Packet(PACKET_TYPE_REQUEST, False, data, seq)
 
     def create_set_ct_packet(self, controller_id: int, seq: int, device_index: int, ct: int) -> Packet:
         # Ensure ct (color temperature) is within 0 to 100
@@ -395,7 +383,7 @@ class CyncHub:
         )
     
         _LOGGER.debug(f"Set Color Temperature Packet Data: {data.hex()}")
-        return Packet(PACKET_TYPE_REQUEST, False, data)
+        return Packet(PACKET_TYPE_REQUEST, False, data, seq)
 
 
     def create_set_rgb_packet(self, controller_id: int, seq: int, device_index: int, r: int, g: int, b: int) -> Packet:
@@ -425,13 +413,13 @@ class CyncHub:
         )
     
         _LOGGER.debug(f"Set RGB Packet Data: {data.hex()}")
-        return Packet(PACKET_TYPE_REQUEST, False, data)
+        return Packet(PACKET_TYPE_REQUEST, False, data, seq)
 
     def create_ping_packet(self) -> Packet:
         data = bytearray()
         data.extend(struct.pack(">B", PACKET_TYPE_PING))  # Packet Type for ping (0xd3 in this case)
         data.extend(bytes([0x00, 0x00, 0x00, 0x00]))  # Zero padding (matches cync-lan)
-        return Packet(PACKET_TYPE_PING, False, bytes(data))
+        return Packet(PACKET_TYPE_PING, False, bytes(data), seq)
 
     # Shutdown method to gracefully close the connection
     def shutdown(self):
