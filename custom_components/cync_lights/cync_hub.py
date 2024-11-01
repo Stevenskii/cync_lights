@@ -93,10 +93,11 @@ DEFAULT_HOST = "cm.gelighting.com"
 DEFAULT_PORT = 23778
 
 class Packet:
-    def __init__(self, packet_type: int, is_response: bool, data: bytes):
+    def __init__(self, packet_type: int, is_response: bool, data: bytes, seq: int = None):
         self.type = packet_type
         self.is_response = is_response
         self.data = data
+        self.seq = seq  # Add this line to store the sequence number
 
     def encode(self) -> bytes:
         """Encode the packet into raw binary form."""
@@ -255,23 +256,10 @@ class CyncHub:
         else:
             _LOGGER.warning("Unhandled PIPE request received")
 
-    async def process_pipe_packet(self, is_response: bool, data: bytes) -> None:
-        """Process PIPE packets."""
-        if is_response:
-            if len(data) >= 6:
-                seq_num = struct.unpack(">H", data[4:6])[0]
-                _LOGGER.debug(f"Acknowledgment received for sequence {seq_num}")
-                self.execute_callback(seq_num)
-            else:
-                _LOGGER.error("Invalid acknowledgment packet")
-        else:
-            _LOGGER.warning("Unhandled PIPE request received")
-
     def execute_callback(self, seq_num: int) -> None:
         """Execute the callback associated with the sequence number."""
         with self.pending_commands_lock:
             command_info = self.pending_commands.pop(seq_num, None)
-    
         if command_info:
             callback = command_info.get('callback')
             if callback:
@@ -414,12 +402,6 @@ class CyncHub:
     
         _LOGGER.debug(f"Set RGB Packet Data: {data.hex()}")
         return Packet(PACKET_TYPE_REQUEST, False, data, seq)
-
-    def create_ping_packet(self) -> Packet:
-        data = bytearray()
-        data.extend(struct.pack(">B", PACKET_TYPE_PING))  # Packet Type for ping (0xd3 in this case)
-        data.extend(bytes([0x00, 0x00, 0x00, 0x00]))  # Zero padding (matches cync-lan)
-        return Packet(PACKET_TYPE_PING, False, bytes(data), seq)
 
     # Shutdown method to gracefully close the connection
     def shutdown(self):
@@ -625,6 +607,7 @@ class CyncRoom:
 
     def command_received(self, seq: int):
         """Handle command acknowledgment from the Cync server."""
+        _LOGGER.debug(f"Command received for sequence {seq}")
         self.hub.pending_commands.pop(seq, None)
 
     def update_room(self):
