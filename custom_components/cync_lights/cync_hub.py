@@ -314,7 +314,7 @@ class CyncHub:
             # You need to map the device ID from the packet to your device objects
             # Since the packet may not contain the device ID directly, you may need to infer it
 
-    else:
+        else:
         _LOGGER.error("Invalid packet data for packet type 4.")
 
     async def process_type_8_packet(self, is_response: bool, data: bytes) -> None:
