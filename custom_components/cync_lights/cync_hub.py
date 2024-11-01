@@ -268,11 +268,10 @@ class CyncHub:
     def execute_callback(self, seq_num: int) -> None:
         """Execute the callback associated with the sequence number."""
         with self.pending_commands_lock:
-            command_info = self.pending_commands.pop(seq_num, None)
-        if command_info:
-            callback = command_info.get('callback')
-            if callback:
-                callback(seq_num)
+            callback = self.pending_commands.pop(seq_num, None)
+        if callback:
+            callback(seq_num)
+
 
     async def send_request(self, packet: Packet, callback=None, *args, **kwargs):
         async def send():
