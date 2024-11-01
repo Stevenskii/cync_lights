@@ -563,7 +563,7 @@ class CyncRoom:
         self.name = room_info.get('name', 'unknown')
         self.home_name = room_info.get('home_name', 'unknown')
         self.parent_room = room_info.get('parent_room', 'unknown')
-        self.mesh_id = int(room_info.get('mesh_id', 0)).to_bytes(2, 'little')
+        self.mesh_id = int(room_info.get('mesh_id', 0))
         self.power_state = False
         self.brightness = 0
         self.color_temp_kelvin = 0
@@ -856,7 +856,7 @@ class CyncSwitch:
         ][0]
         self.name = switch_info.get('name', 'unknown')
         self.home_name = switch_info.get('home_name', 'unknown')
-        self.mesh_id = switch_info.get('mesh_id', 0).to_bytes(2, 'little')
+        self.mesh_id = switch_info.get('mesh_id', 0)
         self.room = room
         self.power_state = False
         self.brightness = 0
