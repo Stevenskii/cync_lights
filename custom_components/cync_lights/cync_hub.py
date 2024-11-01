@@ -265,35 +265,45 @@ class CyncHub:
     async def process_type_4_packet(self, is_response: bool, data: bytes) -> None:
         """Process packet type 4 (Initial Client State)."""
         _LOGGER.debug("Processing packet type 4 (Initial Client State).")
+        _LOGGER.debug(f"Packet data: {hexdump(data)}")
     
-        if len(data) >= 20:
-            # Extract controller ID
-            controller_id = int.from_bytes(data[0:4], 'big')
-            # Extract device index (mesh_id) using 'little' endianness
-            device_index = int.from_bytes(data[19:21], 'little')
-            _LOGGER.debug(f"Packet data: {hexdump(data)}")
+        if len(data) < 6:
+            _LOGGER.error("Packet data too short to process.")
+            return
+    
+        # Extract controller ID
+        controller_id = int.from_bytes(data[0:4], 'big')
+    
+        # Initialize index after controller ID
+        idx = 4
+    
+        # Extract device index (mesh_id)
+        # Since the device index location may vary, you need to find it based on the protocol
+        try:
+            # Example parsing logic based on packet structure
+            device_index = int.from_bytes(data[idx:idx+2], 'little')
+            idx += 2
+    
+            # Proceed with parsing other fields if they exist
+            power_status = bool(data[idx]) if idx < len(data) else None
+            idx += 1
+            brightness = data[idx] if idx < len(data) else None
+            idx += 1
+            color_temp = data[idx] if idx < len(data) else None
+            idx += 1
+            r = data[idx] if idx < len(data) else None
+            idx += 1
+            g = data[idx] if idx < len(data) else None
+            idx += 1
+            b = data[idx] if idx < len(data) else None
+    
             _LOGGER.debug(f"Controller ID: {controller_id}, Device Index (Mesh ID): {device_index}")
     
             # Find the device using mesh_id
-            device = None
-            for dev in self.cync_switches.values():
-                if dev.mesh_id == device_index:
-                    device = dev
-                    break
+            device = next((dev for dev in self.cync_switches.values() if dev.mesh_id == device_index), None)
             if not device:
                 _LOGGER.warning(f"No device found with mesh_id {device_index}")
                 return
-    
-            # Extract power status
-            power_status = bool(data[8])
-            # Extract brightness
-            brightness = data[9]
-            # Extract color temperature
-            color_temp = data[10]
-            # Extract RGB values
-            r = data[11]
-            g = data[12]
-            b = data[13]
     
             _LOGGER.debug(f"Device ID: {device.device_id}, Power Status: {power_status}, Brightness: {brightness}, Color Temp: {color_temp}, RGB: ({r}, {g}, {b})")
     
@@ -304,8 +314,9 @@ class CyncHub:
                 color_temp=color_temp,
                 rgb={'r': r, 'g': g, 'b': b}
             )
-        else:
-            _LOGGER.error("Invalid packet data for packet type 4.")
+    
+        except IndexError:
+            _LOGGER.error("Packet data incomplete or improperly formatted.")
 
     async def process_type_8_packet(self, is_response: bool, data: bytes) -> None:
         """Process packet type 8 (Iteration Request)."""
