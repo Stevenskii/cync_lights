@@ -109,6 +109,8 @@ class Packet:
     def __str__(self):
         return f"Packet(type={self.type}, response={self.is_response}, data={self.data.hex()})"
 
+def hexdump(data):
+    return ' '.join(f'{byte:02X}' for byte in data)
 
 class CyncHub:
     def __init__(self, hass: Any, data: Dict[str, Any], options: Dict[str, Any]):
@@ -250,8 +252,94 @@ class CyncHub:
         elif packet_type == PACKET_TYPE_PIPE:
             _LOGGER.debug("Received PIPE packet.")
             await self.process_pipe_packet(is_response, packet_data)
+        elif packet_type == 0x04:
+            _LOGGER.debug("Received packet type 4 (Initial Client State).")
+            await self.process_type_4_packet(is_response, packet_data)
+        elif packet_type == 0x08:
+            _LOGGER.debug("Received packet type 8 (Iteration Request).")
+            await self.process_type_8_packet(is_response, packet_data)
         else:
             _LOGGER.warning(f"Unhandled packet type: {packet_type}")
+            _LOGGER.debug(f"Packet data ({len(packet_data)} bytes): {hexdump(packet_data)}")
+
+    async def process_type_4_packet(self, is_response: bool, data: bytes) -> None:
+        """Process packet type 4 (Initial Client State)."""
+        _LOGGER.debug("Processing packet type 4 (Initial Client State).")
+    
+        # Assuming the packet contains device state information
+        # Let's parse the packet data to extract device state
+        if len(data) >= 7:
+            # Extract device type and state information
+            # The structure is assumed based on the JavaScript code
+    
+            # Example structure:
+            # Byte 0: Device type
+            # Byte 1: Power status
+            # Byte 2: Brightness
+            # Byte 3: Color temperature
+            # Bytes 4-6: RGB values (for RGB devices)
+    
+            # For the sake of this example, adjust indices as per actual data
+            device_type = data[0]
+            power_status = bool(data[1])
+            brightness = data[2]
+            color_temp = data[3]
+    
+            if device_type == 0x01:
+                # Smart Plug
+                _LOGGER.debug("Device is a Smart Plug.")
+                # Update the device state accordingly
+                # Find the device and update its state
+                self.update_device_state(device_id, power_status=power_status)
+    
+            elif device_type == 0x02:
+                # Smart Light
+                _LOGGER.debug("Device is a Smart Light.")
+                # Update brightness and color temperature
+                self.update_device_state(device_id, power_status=power_status, brightness=brightness, color_temp=color_temp)
+    
+            elif device_type == 0x04:
+                # Light Strip
+                _LOGGER.debug("Device is a Light Strip.")
+                r = data[4]
+                g = data[5]
+                b = data[6]
+                # Update RGB values
+                self.update_device_state(device_id, power_status=power_status, brightness=brightness, rgb={'r': r, 'g': g, 'b': b})
+    
+            else:
+                _LOGGER.debug("Unknown device type.")
+    
+            # Update the device state in your system
+            # You need to map the device ID from the packet to your device objects
+            # Since the packet may not contain the device ID directly, you may need to infer it
+
+    else:
+        _LOGGER.error("Invalid packet data for packet type 4.")
+
+    async def process_type_8_packet(self, is_response: bool, data: bytes) -> None:
+        """Process packet type 8 (Iteration Request)."""
+        _LOGGER.debug("Processing packet type 8 (Iteration Request).")
+    
+        # In the JavaScript code, when the server receives 0x83, it responds with an incremented iterator.
+    
+        if data.startswith(b'\x83'):
+            # This is an iteration request
+            self.iter_counter = (self.iter_counter + 1) % 256 if hasattr(self, 'iter_counter') else 0
+            response = bytes([
+                0x88,  # Response code
+                0x00, 0x00, 0x00, 0x03,  # Length
+                0x00,  # Reserved
+                self.iter_counter,  # Iterator value
+                0x00  # Reserved
+            ])
+            _LOGGER.debug(f"Sending iteration response: {hexdump(response)}")
+            self.writer.write(response)
+            await self.writer.drain()
+        else:
+            _LOGGER.debug(f"Unknown iteration request data: {hexdump(data)}")
+
+
 
     async def process_pipe_packet(self, is_response: bool, data: bytes) -> None:
         """Process PIPE packets."""
@@ -263,15 +351,38 @@ class CyncHub:
             else:
                 _LOGGER.error("Invalid acknowledgment packet")
         else:
-            _LOGGER.warning("Unhandled PIPE request received")
+            _LOGGER.debug(f"Processing PIPE request with data: {hexdump(data)}")
+            # Parse the PIPE request and update device states accordingly
+            # For example, extract device status updates and update your device states
+    
+            # Assuming the PIPE request contains device status updates
+            # You need to parse the data to extract the information
+    
+            # Example parsing (adjust as per actual data structure)
+            if len(data) >= 10:
+                # Extract relevant fields
+                # For example, device ID, status, brightness, etc.
+    
+                # This is a placeholder for actual parsing logic
+                device_id = data[0]  # Adjust index
+                status = bool(data[1])  # Adjust index
+                brightness = data[2]  # Adjust index
 
-    def execute_callback(self, seq_num: int) -> None:
-        """Execute the callback associated with the sequence number."""
-        with self.pending_commands_lock:
-            callback = self.pending_commands.pop(seq_num, None)
-        if callback:
-            callback(seq_num)
-
+    def update_device_state(self, device_id: int, **kwargs):
+        """Update the state of a device."""
+        # Find the device object using the device_id
+        device = self.find_device_by_id(device_id)
+        if not device:
+            _LOGGER.warning(f"Device with ID {device_id} not found.")
+            return
+    
+        # Update device attributes
+        for key, value in kwargs.items():
+            setattr(device, key, value)
+    
+        # Notify about the state change
+        device.publish_update()
+    
 
     async def send_request(self, packet: Packet, callback=None, *args, **kwargs):
         async def send():
