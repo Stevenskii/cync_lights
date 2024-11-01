@@ -289,26 +289,13 @@ class CyncHub:
             if callback:
                 callback(seq_num)
 
-    async def send_request(self, packet: Packet, callback: Optional[Callable[[int], None]] = None, device: Optional['CyncSwitch'] = None) -> Optional[int]:
-        """Send a request packet with an optional callback."""
-        if not self.logged_in or not self.writer:
-            _LOGGER.error("Not authenticated or writer unavailable")
-            return None
-
-        encoded_packet = packet.encode()
-        try:
-            self.writer.write(encoded_packet)
+    async def send_request(self, packet: Packet, callback=None, *args, **kwargs):
+        def send():
+            self.writer.write(packet.data)
             await self.writer.drain()
-            seq_num = self.extract_seq_num(packet)
-
-            if callback and device:
-                with self.pending_commands_lock:
-                    self.pending_commands[seq_num] = {'callback': callback, 'device': device}
-            return seq_num
-            _LOGGER.debug(f"Sending packet to controller {controller_id} for device {device.device_id} with seq_num {seq_num}")
-        except Exception as e:
-            _LOGGER.error(f"Error sending request: {e}")
-            return None
+            if callback:
+                self.pending_commands[packet.seq] = callback
+        self.loop.create_task(send())
 
     def extract_seq_num(self, packet: Packet) -> Optional[int]:
         """Extract sequence number from a packet."""
@@ -332,10 +319,21 @@ class CyncHub:
     #    _LOGGER.debug(f"Set Status Packet Data: {data.hex()}")
     #    return Packet(PACKET_TYPE_PIPE, False, bytes(data))
     def create_set_status_packet(self, controller_id: int, seq: int, device_index: int, status: int) -> Packet:
+        # Ensure controller_id is within the valid range
+        if not (0 <= controller_id <= 0xFFFFFFFF):
+            raise ValueError(f"Controller ID {controller_id} out of range for unsigned int.")
+        if not (0 <= seq <= 0xFFFF):
+            raise ValueError(f"Sequence number {seq} out of range for unsigned short.")
+        if status not in (0, 1):
+            raise ValueError(f"Status {status} must be 0 or 1.")
+    
         mesh_id_bytes = device_index.to_bytes(2, 'little')
+    
+        # Calculate checksum
         checksum = (430 + mesh_id_bytes[0] + mesh_id_bytes[1] + status) % 256
+    
         data = (
-            bytes.fromhex('730000001f')
+            bytes.fromhex('730000001f')  # Packet type and length
             + controller_id.to_bytes(4, 'big')
             + seq.to_bytes(2, 'big')
             + bytes.fromhex('007e00000000f8d00d000000000000')
@@ -346,54 +344,88 @@ class CyncHub:
             + checksum.to_bytes(1, 'big')
             + bytes.fromhex('7e')
         )
+    
+        _LOGGER.debug(f"Set Status Packet Data: {data.hex()}")
+        _LOGGER.debug(f"Controller ID: {controller_id}, Seq: {seq}, Device Index: {device_index}, Status: {status}")
         return Packet(PACKET_TYPE_REQUEST, False, data)
 
     def create_set_brightness_packet(self, controller_id: int, seq: int, device_index: int, brightness: int) -> Packet:
-        data = bytearray()
-
-        data.extend(struct.pack(">B", PACKET_TYPE_REQUEST))
-        data.extend(bytes([0x00, 0x00, 0x00]))  # Zero padding
-        data.extend(struct.pack(">B", 0x1d))  # Packet Length
-        data.extend(struct.pack(">B", 0x02))  # Brightness Command
-        data.extend(struct.pack(">B", brightness))  # Brightness Value
-        data.extend(struct.pack(">I H", controller_id, seq))  # Controller ID and sequence number
-        data.extend(struct.pack(">H", device_index))  # Device Index
-        data.extend(bytes([0x7e, 0x00, 0x00, 0x00]))  # Fixed segment
-        data.extend(struct.pack(">B", brightness))  # Final brightness byte
-
-        return Packet(PACKET_TYPE_PIPE, False, bytes(data))
+        # Ensure brightness is within 0 to 100
+        brightness = max(0, min(100, brightness))
+    
+        mesh_id_bytes = device_index.to_bytes(2, 'little')
+    
+        # Calculate checksum
+        checksum = (469 + mesh_id_bytes[0] + mesh_id_bytes[1] + brightness) % 256
+    
+        data = (
+            bytes.fromhex('730000001e')  # Packet type and length
+            + controller_id.to_bytes(4, 'big')
+            + seq.to_bytes(2, 'big')
+            + bytes.fromhex('007e00000000f8e10c000000000000')
+            + mesh_id_bytes
+            + bytes.fromhex('e1000005')
+            + brightness.to_bytes(1, 'big')
+            + checksum.to_bytes(1, 'big')
+            + bytes.fromhex('7e')
+        )
+    
+        _LOGGER.debug(f"Set Brightness Packet Data: {data.hex()}")
+        return Packet(PACKET_TYPE_REQUEST, False, data)
 
     def create_set_ct_packet(self, controller_id: int, seq: int, device_index: int, ct: int) -> Packet:
-        if ct < 0 or ct > 100:
-            raise ValueError("Color temperature must be between 0 and 100.")
+        # Ensure ct (color temperature) is within 0 to 100
+        ct = max(0, min(100, ct))
+    
+        mesh_id_bytes = device_index.to_bytes(2, 'little')
+    
+        # Calculate checksum
+        checksum = (469 + mesh_id_bytes[0] + mesh_id_bytes[1] + ct) % 256
+    
+        data = (
+            bytes.fromhex('730000001e')  # Packet type and length
+            + controller_id.to_bytes(4, 'big')
+            + seq.to_bytes(2, 'big')
+            + bytes.fromhex('007e00000000f8e20c000000000000')
+            + mesh_id_bytes
+            + bytes.fromhex('e2000005')
+            + ct.to_bytes(1, 'big')
+            + checksum.to_bytes(1, 'big')
+            + bytes.fromhex('7e')
+        )
+    
+        _LOGGER.debug(f"Set Color Temperature Packet Data: {data.hex()}")
+        return Packet(PACKET_TYPE_REQUEST, False, data)
 
-        data = bytearray()
-
-        data.extend(struct.pack(">B", PACKET_TYPE_REQUEST))
-        data.extend(bytes([0x00, 0x00, 0x00]))  # Zero padding
-        data.extend(struct.pack(">B", 0x1e))  # Packet Length
-        data.extend(struct.pack(">B", 0x03))  # CT Command
-        data.extend(struct.pack(">B", ct))  # Color temperature value
-        data.extend(struct.pack(">I H", controller_id, seq))  # Controller ID and sequence number
-        data.extend(struct.pack(">H", device_index))  # Device Index
-        data.extend(bytes([0x7e, 0x00, 0x00, 0x00]))  # Fixed segment
-        data.extend(struct.pack(">B", ct))  # Final CT byte
-
-        return Packet(PACKET_TYPE_PIPE, False, bytes(data))
 
     def create_set_rgb_packet(self, controller_id: int, seq: int, device_index: int, r: int, g: int, b: int) -> Packet:
-        data = bytearray()
-
-        data.extend(struct.pack(">B", PACKET_PIPE_TYPE_SET_RGB))  # Packet Type for RGB color
-        data.extend(bytes([0x00, 0x00, 0x00]))  # Zero padding
-        data.extend(struct.pack(">B", 0x20))  # Packet Length (0x20 based on cync-lan)
-        data.extend(struct.pack(">B", 0x04))  # RGB Command (0x04)
-        data.extend(struct.pack(">BBB", r, g, b))  # Red, Green, and Blue values
-        data.extend(struct.pack(">I H", controller_id, seq))  # Device-specific information
-        data.extend(struct.pack(">H", device_index))  # Device Mesh ID or Index
-        data.extend(bytes([0x7e, 0x00, 0x00, 0x00]))  # Fixed section from cync-lan
-        data.extend(struct.pack(">I", 0xf8e20e))  # Padding/flags for RGB
-        return Packet(PACKET_TYPE_PIPE, False, bytes(data))
+        # Ensure RGB values are within 0 to 255
+        r = max(0, min(255, r))
+        g = max(0, min(255, g))
+        b = max(0, min(255, b))
+    
+        mesh_id_bytes = device_index.to_bytes(2, 'little')
+    
+        # Calculate checksum
+        checksum = (496 + mesh_id_bytes[0] + mesh_id_bytes[1] + 1 + 100 + 254 + r + g + b) % 256
+    
+        data = (
+            bytes.fromhex('7300000022')  # Packet type and length
+            + controller_id.to_bytes(4, 'big')
+            + seq.to_bytes(2, 'big')
+            + bytes.fromhex('007e00000000f8f010000000000000')
+            + mesh_id_bytes
+            + bytes.fromhex('f00000')
+            + bytes([1])  # Status (1 for on)
+            + bytes([100])  # Brightness (100%)
+            + bytes([254])  # Color temperature (254 indicates RGB mode)
+            + bytes([r, g, b])
+            + checksum.to_bytes(1, 'big')
+            + bytes.fromhex('7e')
+        )
+    
+        _LOGGER.debug(f"Set RGB Packet Data: {data.hex()}")
+        return Packet(PACKET_TYPE_REQUEST, False, data)
 
     def create_ping_packet(self) -> Packet:
         data = bytearray()
@@ -773,116 +805,80 @@ class CyncSwitch:
         """Turn on the light with optional brightness, color temperature, RGB color, effect, and transition."""
         attempts = 0
         update_received = False
-        seq_ct = None
-        seq_brightness = None
-        seq_rgb = None
-        seq_status = None
-
-        # Convert brightness to percentage if needed
-        if brightness is not None:
-            brightness_value = max(1, min(100, round((brightness / 255) * 100)))
-        else:
-            brightness_value = self.brightness if self.brightness else 100  # Default to 100% if no brightness is set
-
-        # Handle color temperature
-        if color_temp_kelvin is not None:
-            color_temp = max(0, min(100, round(
-                (
-                    (color_temp_kelvin - self.min_color_temp_kelvin) /
-                    (self.max_color_temp_kelvin - self.min_color_temp_kelvin)
-                ) * 100
-            )))
-        else:
-            color_temp = None
-
-        # Handle RGB color
-        if rgb_color is not None:
-            r, g, b = rgb_color
-        else:
-            r, g, b = self.rgb['r'], self.rgb['g'], self.rgb['b']
-
-        # Handle effects
-        if effect is not None:
-            # Implement effect handling logic here
-            self.effect = effect
-            # For example, map the effect name to an effect index or code
-            effect_index = self.hub.effect_mapping.get(effect)
-            if effect_index is not None:
-                # Send effect command to the device
-                pass  # Placeholder for effect command implementation
-
-        # Handle transition
-        if transition is not None:
-            # Implement transition handling logic here
-            self.transition = transition
-            # For example, set the transition time for the device
-            pass  # Placeholder for transition command implementation
-
+    
         while not update_received and attempts < int(self._command_retry_time / self._command_timeout):
-            # Unique sequence numbers for each command
             seq_status = await self.hub.get_seq_num()
             controller = int(self.controllers[attempts % len(self.controllers)] if self.controllers else self.default_controller)
-
-            # Send Set Status (On) with unique seq_num
+    
+            # Send Set Status (On)
             status_packet = self.hub.create_set_status_packet(controller, seq_status, self.mesh_id_int, 1)
             await self.hub.send_request(status_packet, self.command_received)
-
-            # Send Set Brightness with unique seq_num
-            if self.support_brightness:
+    
+            # Handle brightness
+            if self.support_brightness and brightness is not None:
                 seq_brightness = await self.hub.get_seq_num()
+                brightness_value = max(0, min(100, round((brightness / 255) * 100)))
                 brightness_packet = self.hub.create_set_brightness_packet(controller, seq_brightness, self.mesh_id_int, brightness_value)
                 await self.hub.send_request(brightness_packet, self.command_received)
-
-            # Send Set Color Temperature with unique seq_num
-            if self.support_color_temp and color_temp is not None:
+    
+            # Handle color temperature
+            if self.support_color_temp and color_temp_kelvin is not None:
                 seq_ct = await self.hub.get_seq_num()
-                color_temp_packet = self.hub.create_set_ct_packet(controller, seq_ct, self.mesh_id_int, ct=color_temp)
-                await self.hub.send_request(color_temp_packet, self.command_received)
-
-            # Send Set RGB with unique seq_num
+                color_temp = max(0, min(100, round(
+                    ((color_temp_kelvin - self.min_color_temp_kelvin) /
+                    (self.max_color_temp_kelvin - self.min_color_temp_kelvin)) * 100)))
+                ct_packet = self.hub.create_set_ct_packet(controller, seq_ct, self.mesh_id_int, color_temp)
+                await self.hub.send_request(ct_packet, self.command_received)
+    
+            # Handle RGB color
             if self.support_rgb and rgb_color is not None:
                 seq_rgb = await self.hub.get_seq_num()
+                r, g, b = [max(0, min(255, val)) for val in rgb_color]
                 rgb_packet = self.hub.create_set_rgb_packet(controller, seq_rgb, self.mesh_id_int, r, g, b)
                 await self.hub.send_request(rgb_packet, self.command_received)
-
-            # Implement effect and transition commands here if applicable
-
-            # Wait for all acknowledgments
+    
+            # Wait for acknowledgments
             await asyncio.sleep(self._command_timeout)
-
+    
             # Check if all commands have been acknowledged
-            pending = [
-                self.hub.pending_commands.get(seq_status),
-                self.hub.pending_commands.get(seq_brightness) if self.support_brightness else None,
-                self.hub.pending_commands.get(seq_ct) if self.support_color_temp else None,
-                self.hub.pending_commands.get(seq_rgb) if self.support_rgb else None
-            ]
-
-            if not any(pending):
+            pending_seqs = [seq_status]
+            if self.support_brightness and brightness is not None:
+                pending_seqs.append(seq_brightness)
+            if self.support_color_temp and color_temp_kelvin is not None:
+                pending_seqs.append(seq_ct)
+            if self.support_rgb and rgb_color is not None:
+                pending_seqs.append(seq_rgb)
+    
+            if all(seq not in self.hub.pending_commands for seq in pending_seqs):
                 update_received = True
             else:
                 attempts += 1
                 _LOGGER.debug(f"Attempt {attempts} to turn on the switch.")
 
+
     async def turn_off(self, **kwargs: Any) -> None:
         """Turn off the light."""
         attempts = 0
         update_received = False
+    
         while not update_received and attempts < int(self._command_retry_time / self._command_timeout):
             seq = await self.hub.get_seq_num()
             controller = int(self.controllers[attempts % len(self.controllers)] if self.controllers else self.default_controller)
-
+    
             # Send Set Status (Off)
             status_packet = self.hub.create_set_status_packet(controller, seq, self.mesh_id_int, 0)
-            await self.hub.send_request(status_packet)
-
-            self.hub.pending_commands[seq] = self.command_received
+            await self.hub.send_request(status_packet, self.command_received)
+    
+            # Wait for acknowledgment
             await asyncio.sleep(self._command_timeout)
-            if self.hub.pending_commands.get(seq, None) is not None:
-                self.hub.pending_commands.pop(seq)
-                attempts += 1
-            else:
+    
+            # Check if the command has been acknowledged
+            if seq not in self.hub.pending_commands:
                 update_received = True
+            else:
+                attempts += 1
+                _LOGGER.debug(f"Attempt {attempts} to turn off the switch.")
+
 
     def command_received(self, seq: int):
         """Handle command acknowledgment from the Cync server."""
