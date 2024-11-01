@@ -397,6 +397,15 @@ class CyncHub:
         if packet.type != PACKET_TYPE_REQUEST or len(packet.data) < 6:
             return None
         return struct.unpack(">H", packet.data[4:6])[0]
+    
+    def execute_callback(self, seq_num):
+        """Execute the callback associated with the given sequence number."""
+        if seq_num in self.pending_commands:
+            callback = self.pending_commands.pop(seq_num)
+            callback(seq_num)
+        else:
+            _LOGGER.warning(f"No pending command for sequence {seq_num}")
+
 
     # Packet creation methods
     #def create_set_status_packet(self, controller_id: int, seq: int, device_index: int, status: int) -> Packet:
@@ -727,7 +736,6 @@ class CyncRoom:
     def command_received(self, seq: int):
         """Handle command acknowledgment from the Cync server."""
         _LOGGER.debug(f"Command received for sequence {seq}")
-        self.hub.pending_commands.pop(seq, None)
 
     def update_room(self):
         """Update the current state of the room."""
@@ -973,7 +981,6 @@ class CyncSwitch:
     def command_received(self, seq: int):
         """Handle command acknowledgment from the Cync server."""
         _LOGGER.debug(f"Command received for sequence {seq}")
-        self.hub.pending_commands.pop(seq, None)
 
     def update_switch(self, state, brightness, color_temp=None, rgb=None):
         """Update the state of the switch as updates are received from the Cync server."""
