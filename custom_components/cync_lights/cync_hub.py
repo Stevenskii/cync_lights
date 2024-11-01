@@ -266,78 +266,109 @@ class CyncHub:
         """Process packet type 4 (Initial Client State)."""
         _LOGGER.debug("Processing packet type 4 (Initial Client State).")
     
-        # Assuming the packet contains device state information
-        # Let's parse the packet data to extract device state
-        if len(data) >= 7:
-            # Extract device type and state information
-            # The structure is assumed based on the JavaScript code
+        # The packet likely contains information about a device's state
+        # Let's attempt to parse it
+        if len(data) >= 20:  # Ensure the packet is at least long enough
+            # The structure may be as follows (this is hypothetical and may need adjustments):
+            # Bytes 0-3: Device ID (controller ID)
+            # Bytes 4-5: Device Index (Mesh ID)
+            # Bytes 6-7: Unknown (could be flags or types)
+            # Byte 8: Power Status
+            # Byte 9: Brightness
+            # Byte 10: Color Temperature
+            # Bytes 11-13: RGB values (R, G, B)
+            # Adjust the indices as per the actual data
     
-            # Example structure:
-            # Byte 0: Device type
-            # Byte 1: Power status
-            # Byte 2: Brightness
-            # Byte 3: Color temperature
-            # Bytes 4-6: RGB values (for RGB devices)
+            # For now, let's log the data to analyze it
+            _LOGGER.debug(f"Packet data: {hexdump(data)}")
     
-            # For the sake of this example, adjust indices as per actual data
-            device_type = data[0]
-            power_status = bool(data[1])
-            brightness = data[2]
-            color_temp = data[3]
+            # Extract controller ID
+            controller_id = int.from_bytes(data[0:4], 'big')
+            device_index = int.from_bytes(data[4:6], 'big')
+            # Let's try to find the device using controller ID and device index
     
-            if device_type == 0x01:
-                # Smart Plug
-                _LOGGER.debug("Device is a Smart Plug.")
-                # Update the device state accordingly
-                # Find the device and update its state
-                self.update_device_state(device_id, power_status=power_status)
+            # Map device_index back to device_id
+            # In your devices, you have mesh_id_int, which is device_index
+            # So we need to find the device with mesh_id_int == device_index
     
-            elif device_type == 0x02:
-                # Smart Light
-                _LOGGER.debug("Device is a Smart Light.")
-                # Update brightness and color temperature
-                self.update_device_state(device_id, power_status=power_status, brightness=brightness, color_temp=color_temp)
+            device = None
+            for dev in self.cync_switches.values():
+                if dev.mesh_id_int == device_index:
+                    device = dev
+                    break
+            if not device:
+                _LOGGER.warning(f"No device found with mesh_id_int {device_index}")
+                return
     
-            elif device_type == 0x04:
-                # Light Strip
-                _LOGGER.debug("Device is a Light Strip.")
-                r = data[4]
-                g = data[5]
-                b = data[6]
-                # Update RGB values
-                self.update_device_state(device_id, power_status=power_status, brightness=brightness, rgb={'r': r, 'g': g, 'b': b})
+            # Extract power status
+            power_status = bool(data[8])
+            # Extract brightness (assuming it's in percentage 0-100)
+            brightness = data[9]
+            # Extract color temperature
+            color_temp = data[10]
+            # Extract RGB values
+            r = data[11]
+            g = data[12]
+            b = data[13]
     
-            else:
-                _LOGGER.debug("Unknown device type.")
+            _LOGGER.debug(f"Device ID: {device.device_id}, Controller ID: {controller_id}, Mesh ID: {device_index}")
+            _LOGGER.debug(f"Power Status: {power_status}, Brightness: {brightness}, Color Temp: {color_temp}, RGB: ({r}, {g}, {b})")
     
-            # Update the device state in your system
-            # You need to map the device ID from the packet to your device objects
-            # Since the packet may not contain the device ID directly, you may need to infer it
-
+            # Update the device state
+            device.update_switch(
+                state=power_status,
+                brightness=brightness,
+                color_temp=color_temp,
+                rgb={'r': r, 'g': g, 'b': b}
+            )
         else:
             _LOGGER.error("Invalid packet data for packet type 4.")
+
 
     async def process_type_8_packet(self, is_response: bool, data: bytes) -> None:
         """Process packet type 8 (Iteration Request)."""
         _LOGGER.debug("Processing packet type 8 (Iteration Request).")
     
-        # In the JavaScript code, when the server receives 0x83, it responds with an incremented iterator.
+        # It's possible that this packet contains updates about device states
+        if len(data) >= 20:
+            # Extract controller ID
+            controller_id = int.from_bytes(data[0:4], 'big')
+            device_index = int.from_bytes(data[4:6], 'big')
+            # Continue parsing as per actual data
     
-        if data.startswith(b'\x83'):
-            # This is an iteration request
-            self.iter_counter = (self.iter_counter + 1) % 256 if hasattr(self, 'iter_counter') else 0
-            response = bytes([
-                0x88,  # Response code
-                0x00, 0x00, 0x00, 0x03,  # Length
-                0x00,  # Reserved
-                self.iter_counter,  # Iterator value
-                0x00  # Reserved
-            ])
-            _LOGGER.debug(f"Sending iteration response: {hexdump(response)}")
-            self.writer.write(response)
-            await self.writer.drain()
+            _LOGGER.debug(f"Iteration Request data: {hexdump(data)}")
+    
+            # Find the device
+            device = None
+            for dev in self.cync_switches.values():
+                if dev.mesh_id_int == device_index:
+                    device = dev
+                    break
+            if not device:
+                _LOGGER.warning(f"No device found with mesh_id_int {device_index}")
+                return
+    
+            # Parse the rest of the data
+            # Extract power status, brightness, color temp, RGB, etc.
+    
+            # For now, let's assume similar structure to type 4
+            power_status = bool(data[8])
+            brightness = data[9]
+            color_temp = data[10]
+            r = data[11]
+            g = data[12]
+            b = data[13]
+    
+            # Update the device state
+            device.update_switch(
+                state=power_status,
+                brightness=brightness,
+                color_temp=color_temp,
+                rgb={'r': r, 'g': g, 'b': b}
+            )
         else:
-            _LOGGER.debug(f"Unknown iteration request data: {hexdump(data)}")
+            _LOGGER.error("Invalid packet data for packet type 8.")
+
 
 
 
@@ -991,17 +1022,17 @@ class CyncSwitch:
                 (color_temp / 100) +
                 self.min_color_temp_kelvin
             )
-
+    
         if rgb is not None:
             self.rgb = rgb
-
+    
         # Use the brightness provided by Cync (0-100) directly
         if brightness is not None:
             self.brightness = brightness
-
+    
         previous_state = (self.power_state, self.brightness, self.color_temp_kelvin, self.rgb)
         new_state = (state, brightness, self.color_temp_kelvin, self.rgb)
-
+    
         if previous_state != new_state:
             self.power_state = state
             self.brightness = brightness if self.support_brightness and state else 100 if state else 0
@@ -1010,6 +1041,7 @@ class CyncSwitch:
             self.publish_update()
             if self._update_parent_room:
                 self._update_parent_room()
+
 
     def update_controllers(self):
         """Update the list of responsive, Wi-Fi connected controller devices."""
