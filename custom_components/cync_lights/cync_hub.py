@@ -290,7 +290,7 @@ class CyncHub:
                 callback(seq_num)
 
     async def send_request(self, packet: Packet, callback=None, *args, **kwargs):
-        def send():
+        async def send():
             self.writer.write(packet.data)
             await self.writer.drain()
             if callback:
