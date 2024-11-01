@@ -70,7 +70,8 @@ class InvalidCyncConfiguration(Exception):
 
 # Packet types (from cync-lan)
 PACKET_TYPE_REQUEST = 0x73  # Status and brightness request
-PACKET_TYPE_PING = 0xD3  # Heartbeat/Ping packet type
+PACKET_TYPE_PING = 0x0D  # 13 in decimal
+PACKET_TYPE_PIPE = 0x07  # 7 in decimal
 
 # Pipe types (from cync-lan)
 PACKET_PIPE_TYPE_SET_STATUS = 0xD0  # Set status (on/off)
@@ -97,9 +98,10 @@ class Packet:
 
     def encode(self) -> bytes:
         """Encode the packet into raw binary form."""
-        type_byte = (self.type << 4) | 3  # Assuming version 3
+        type_byte = (self.type << 4) & 0xF0  # Ensure type is in bits 7-4
+        type_byte |= 0x03  # Version or flags in bits 1-0 (adjust as needed)
         if self.is_response:
-            type_byte |= 8
+            type_byte |= 0x08  # Set response flag in bit 3
         length = len(self.data)
         header = struct.pack(">B I", type_byte, length)
         return header + self.data
@@ -227,7 +229,7 @@ class CyncHub:
                 self.buffer += data
                 while len(self.buffer) >= 5:
                     header = self.buffer[:5]
-                    packet_type, is_response = header[0] >> 4, (header[0] & 8) != 0
+                    packet_type, is_response = (header[0] & 0XF0) >> 4, (header[0] & 0x08) != 0
                     packet_length = struct.unpack(">I", header[1:5])[0]
                     if len(self.buffer) < 5 + packet_length:
                         break
@@ -245,7 +247,7 @@ class CyncHub:
         if packet_type == PACKET_TYPE_PING:
             _LOGGER.debug("Received PING packet.")
             # Optionally, respond to the PING if necessary
-        elif packet_type == PACKET_TYPE_REQUEST:
+        elif packet_type == PACKET_TYPE_PIPE:
             _LOGGER.debug("Received PIPE packet.")
             await self.process_pipe_packet(is_response, packet_data)
         else:
