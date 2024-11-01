@@ -267,50 +267,81 @@ class CyncHub:
         _LOGGER.debug("Processing packet type 4 (Initial Client State).")
         _LOGGER.debug(f"Packet data: {hexdump(data)}")
     
-        if len(data) < 22:
-            _LOGGER.error("Packet data too short to process.")
+        # Ensure there is enough data to extract the controller ID
+        if len(data) < 4:
+            _LOGGER.error("Packet data too short to extract controller ID.")
             return
     
         # Extract controller ID
         controller_id = int.from_bytes(data[0:4], 'big')
     
-        # Extract device index (mesh_id) from data[19:21]
-        device_index = int.from_bytes(data[19:21], 'little')
+        # Initialize variables
+        device_index = None
+        power_status = None
+        brightness = None
+        color_temp = None
+        r = g = b = None
     
-        _LOGGER.debug(f"Controller ID: {controller_id}, Device Index (Mesh ID): {device_index}")
+        if len(data) >= 22:
+            # Packet is long enough to extract all fields
+            # Extract device index (mesh_id) from data[19:21]
+            device_index = int.from_bytes(data[19:21], 'little')
     
-        # Find the device using mesh_id
-        device = next((dev for dev in self.cync_switches.values() if dev.mesh_id == device_index), None)
-        if not device:
-            _LOGGER.warning(f"No device found with mesh_id {device_index}")
+            # Extract power status from data[8]
+            power_status = bool(data[8])
+    
+            # Extract brightness from data[12]
+            brightness = data[12]
+    
+            # Extract color temperature from data[13]
+            color_temp = data[13]
+    
+            # Extract RGB values from data[14:17]
+            r = data[14]
+            g = data[15]
+            b = data[16]
+    
+            _LOGGER.debug(f"Controller ID: {controller_id}, Device Index (Mesh ID): {device_index}")
+    
+            # Find the device using mesh_id
+            device = next((dev for dev in self.cync_switches.values() if dev.mesh_id == device_index), None)
+            if not device:
+                _LOGGER.warning(f"No device found with mesh_id {device_index}")
+                return
+    
+            _LOGGER.debug(
+                f"Device ID: {device.device_id}, Power Status: {power_status}, "
+                f"Brightness: {brightness}, Color Temp: {color_temp}, RGB: ({r}, {g}, {b})"
+            )
+    
+            # Update the device state with available data
+            device.update_switch(
+                state=power_status,
+                brightness=brightness,
+                color_temp=color_temp,
+                rgb={'r': r, 'g': g, 'b': b}
+            )
+        elif len(data) >= 7:
+            # Packet is shorter but may contain minimal data
+            # Extract device index (mesh_id) from data[4:6]
+            device_index = int.from_bytes(data[4:6], 'little')
+    
+            # Extract power status from data[6]
+            power_status = bool(data[6])
+    
+            _LOGGER.debug(f"Controller ID: {controller_id}, Device Index (Mesh ID): {device_index}, Power Status: {power_status}")
+    
+            # Find the device using mesh_id
+            device = next((dev for dev in self.cync_switches.values() if dev.mesh_id == device_index), None)
+            if not device:
+                _LOGGER.warning(f"No device found with mesh_id {device_index}")
+                return
+    
+            # Update the device state with minimal data
+            device.update_switch(state=power_status)
+        else:
+            _LOGGER.error("Packet data too short to extract device index and power status.")
             return
-    
-        # Extract power status from data[8]
-        power_status = bool(data[8])
-    
-        # Extract brightness from data[12]
-        brightness = data[12]
-    
-        # Extract color temperature from data[13]
-        color_temp = data[13]
-    
-        # Extract RGB values from data[14:17]
-        r = data[14]
-        g = data[15]
-        b = data[16]
-    
-        _LOGGER.debug(
-            f"Device ID: {device.device_id}, Power Status: {power_status}, "
-            f"Brightness: {brightness}, Color Temp: {color_temp}, RGB: ({r}, {g}, {b})"
-        )
-    
-        # Update the device state
-        device.update_switch(
-            state=power_status,
-            brightness=brightness,
-            color_temp=color_temp,
-            rgb={'r': r, 'g': g, 'b': b}
-        )
 
     async def process_type_8_packet(self, is_response: bool, data: bytes) -> None:
         """Process packet type 8 (Iteration Request)."""
