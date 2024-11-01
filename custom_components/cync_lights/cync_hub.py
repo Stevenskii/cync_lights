@@ -315,7 +315,7 @@ class CyncHub:
             # Extract controller ID
             controller_id = int.from_bytes(data[0:4], 'big')
             # Extract device index (mesh_id) using 'little' endianness
-            device_index = int.from_bytes(data[4:6], 'little')
+            device_index = int.from_bytes(data[21:23], 'little')
             _LOGGER.debug(f"Iteration Request data: {hexdump(data)}")
             _LOGGER.debug(f"Controller ID: {controller_id}, Device Index (Mesh ID): {device_index}")
         
