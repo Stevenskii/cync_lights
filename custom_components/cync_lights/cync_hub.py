@@ -439,6 +439,7 @@ class CyncHub:
         async def send():
             self.writer.write(packet.data)
             await self.writer.drain()
+            _LOGGER.debug(f"Sent packet data: {packet.data.hex()}")
             if callback:
                 self.pending_commands[packet.seq] = callback
         self.hass.loop.create_task(send())
@@ -501,7 +502,7 @@ class CyncHub:
         )
     
         _LOGGER.debug(f"Set Status Packet Data: {data.hex()}")
-        _LOGGER.debug(f"Controller ID: {controller_id}, Seq: {seq}, Device Index: {device_index}, Status: {status}")
+        _LOGGER.debug(f"Controller ID: {controller_id}, Seq: {seq}, Device Index: {device_index}, Status: {status}, mesh_id_bytes: {mesh_id_bytes.hex()}, checksum: {checksum}")
         return Packet(PACKET_TYPE_REQUEST, False, data, seq)
 
     def create_set_brightness_packet(self, controller_id: int, seq: int, device_index: int, brightness: int) -> Packet:
