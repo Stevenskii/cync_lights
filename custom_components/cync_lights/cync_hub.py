@@ -324,17 +324,15 @@ class CyncHub:
                 rgb={'r': r, 'g': g, 'b': b}
             )
         elif len(data) >= 7:
-            # Packet is shorter but may contain minimal data
-    
-            # Extract device index (mesh_id) from data[4:6]
-            device_index = data[5]
-    
-            # Extract power status from data[6]
-            power_status_byte = data[6]
+            device_index = data[4]
+            power_status_byte = data[5]
             power_status = bool(power_status_byte & 0x01)
-    
+        
             _LOGGER.debug(f"Packet data: {hexdump(data)}")
-            _LOGGER.debug(f"Controller ID: {controller_id}, Raw Device Index Bytes: {data[4:6].hex()}, Parsed Device Index: {device_index}")
+            _LOGGER.debug(f"Controller ID: {controller_id}")
+            _LOGGER.debug(f"Extracted device_index (mesh_id): {device_index} from data[4]: {data[4]:02X}")
+            _LOGGER.debug(f"Extracted power_status_byte: {power_status_byte:02X} from data[5]: {data[5]:02X}")
+            _LOGGER.debug(f"Power Status: {power_status}")
     
             # Find the device using mesh_id
             device = next((dev for dev in self.cync_switches.values() if dev.mesh_id == device_index), None)
