@@ -284,11 +284,13 @@ class CyncHub:
     
         if len(data) >= 22:
             # Packet is long enough to extract all fields
-            # Extract device index (mesh_id) from data[19:21]
+    
+            # Extract device index (mesh_id) from data[4:6]
             device_index = int.from_bytes(data[19:21], 'little')
     
-            # Extract power status from data[8]
-            power_status = bool(data[8])
+            # Extract power status from data[5]
+            power_status_byte = data[5]
+            power_status = bool(power_status_byte & 0x01)
     
             # Extract brightness from data[12]
             brightness = data[12]
@@ -323,11 +325,13 @@ class CyncHub:
             )
         elif len(data) >= 7:
             # Packet is shorter but may contain minimal data
+    
             # Extract device index (mesh_id) from data[4:6]
             device_index = int.from_bytes(data[4:6], 'little')
     
             # Extract power status from data[6]
-            power_status = bool(data[6])
+            power_status_byte = data[6]
+            power_status = bool(power_status_byte & 0x01)
     
             _LOGGER.debug(f"Controller ID: {controller_id}, Device Index (Mesh ID): {device_index}, Power Status: {power_status}")
     
@@ -336,7 +340,7 @@ class CyncHub:
             if not device:
                 _LOGGER.warning(f"No device found with mesh_id {device_index}")
                 return
-    
+
             # Update the device state with minimal data
             device.update_switch(state=power_status)
         else:
