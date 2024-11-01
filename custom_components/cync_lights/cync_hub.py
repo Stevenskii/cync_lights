@@ -317,20 +317,36 @@ class CyncHub:
         return struct.unpack(">H", packet.data[4:6])[0]
 
     # Packet creation methods
+    #def create_set_status_packet(self, controller_id: int, seq: int, device_index: int, status: int) -> Packet:
+    #    data = bytearray()
+    #
+    #    data.extend(struct.pack(">B", PACKET_TYPE_REQUEST))  # Packet Type (0x73 for status)
+    #    data.extend(bytes([0x00, 0x00, 0x00]))  # Zero padding
+    #    data.extend(struct.pack(">B", 0x1f))  # Packet Length
+    #    data.extend(struct.pack(">B", status))  # Status (0x01 to turn on, 0x00 to turn off)
+    #    data.extend(struct.pack(">I H", controller_id, seq))  # Controller ID and sequence number
+    #    data.extend(struct.pack(">H", device_index))  # Device index
+    #    data.extend(bytes([0x7e, 0x00, 0x00, 0x00]))  # Fixed segment
+    #    data.extend(struct.pack(">I", 0xf8d00d))  # Additional status-related bytes
+    #    data.extend(struct.pack(">B", status))  # Final status byte
+    #    _LOGGER.debug(f"Set Status Packet Data: {data.hex()}")
+    #    return Packet(PACKET_TYPE_PIPE, False, bytes(data))
     def create_set_status_packet(self, controller_id: int, seq: int, device_index: int, status: int) -> Packet:
-        data = bytearray()
-
-        data.extend(struct.pack(">B", PACKET_TYPE_REQUEST))  # Packet Type (0x73 for status)
-        data.extend(bytes([0x00, 0x00, 0x00]))  # Zero padding
-        data.extend(struct.pack(">B", 0x1f))  # Packet Length
-        data.extend(struct.pack(">B", status))  # Status (0x01 to turn on, 0x00 to turn off)
-        data.extend(struct.pack(">I H", controller_id, seq))  # Controller ID and sequence number
-        data.extend(struct.pack(">H", device_index))  # Device index
-        data.extend(bytes([0x7e, 0x00, 0x00, 0x00]))  # Fixed segment
-        data.extend(struct.pack(">I", 0xf8d00d))  # Additional status-related bytes
-        data.extend(struct.pack(">B", status))  # Final status byte
-        _LOGGER.debug(f"Set Status Packet Data: {data.hex()}")
-        return Packet(PACKET_TYPE_PIPE, False, bytes(data))
+        mesh_id_bytes = device_index.to_bytes(2, 'little')
+        checksum = (430 + mesh_id_bytes[0] + mesh_id_bytes[1] + status) % 256
+        data = (
+            bytes.fromhex('730000001f')
+            + controller_id.to_bytes(4, 'big')
+            + seq.to_bytes(2, 'big')
+            + bytes.fromhex('007e00000000f8d00d000000000000')
+            + mesh_id_bytes
+            + bytes.fromhex('d00000')
+            + status.to_bytes(1, 'big')
+            + bytes.fromhex('0000')
+            + checksum.to_bytes(1, 'big')
+            + bytes.fromhex('7e')
+        )
+        return Packet(PACKET_TYPE_REQUEST, False, data)
 
     def create_set_brightness_packet(self, controller_id: int, seq: int, device_index: int, brightness: int) -> Packet:
         data = bytearray()
