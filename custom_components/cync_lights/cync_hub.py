@@ -883,7 +883,7 @@ class CyncRoom:
     def publish_update(self):
         """Publish the update to Home Assistant."""
         if self._update_callback:
-            asyncio.run_coroutine_threadsafe(self._update_callback(), self.hub.hass.loop)
+            self.hub.hass.loop.call_soon_threadsafe(self._update_callback)
 
 class CyncSwitch:
     def __init__(self, device_id, switch_info, room, hub) -> None:
@@ -1093,7 +1093,7 @@ class CyncSwitch:
     def publish_update(self):
         """Publish the update to Home Assistant."""
         if self._update_callback:
-            asyncio.run_coroutine_threadsafe(self._update_callback(), self.hub.hass.loop)
+            self.hub.hass.loop.call_soon_threadsafe(self._update_callback)
 
 
 class CyncMotionSensor:
@@ -1122,7 +1122,7 @@ class CyncMotionSensor:
 
     def publish_update(self):
         if self._update_callback:
-            asyncio.run_coroutine_threadsafe(self._update_callback(), self.hub.hass.loop)
+            self.hub.hass.loop.call_soon_threadsafe(self._update_callback)
 
 
 
@@ -1152,7 +1152,7 @@ class CyncAmbientLightSensor:
 
     def publish_update(self):
         if self._update_callback:
-            asyncio.run_coroutine_threadsafe(self._update_callback(), self.hub.hass.loop)
+            self.hub.hass.loop.call_soon_threadsafe(self._update_callback)
 
 
 class CyncUserData:
