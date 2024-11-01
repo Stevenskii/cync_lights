@@ -295,7 +295,7 @@ class CyncHub:
             await self.writer.drain()
             if callback:
                 self.pending_commands[packet.seq] = callback
-        self.loop.create_task(send())
+        self.hass.loop.create_task(send())
 
     def extract_seq_num(self, packet: Packet) -> Optional[int]:
         """Extract sequence number from a packet."""
