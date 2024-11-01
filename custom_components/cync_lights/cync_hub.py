@@ -266,43 +266,27 @@ class CyncHub:
         """Process packet type 4 (Initial Client State)."""
         _LOGGER.debug("Processing packet type 4 (Initial Client State).")
     
-        # The packet likely contains information about a device's state
-        # Let's attempt to parse it
-        if len(data) >= 20:  # Ensure the packet is at least long enough
-            # The structure may be as follows (this is hypothetical and may need adjustments):
-            # Bytes 0-3: Device ID (controller ID)
-            # Bytes 4-5: Device Index (Mesh ID)
-            # Bytes 6-7: Unknown (could be flags or types)
-            # Byte 8: Power Status
-            # Byte 9: Brightness
-            # Byte 10: Color Temperature
-            # Bytes 11-13: RGB values (R, G, B)
-            # Adjust the indices as per the actual data
-    
-            # For now, let's log the data to analyze it
-            _LOGGER.debug(f"Packet data: {hexdump(data)}")
-    
+        if len(data) >= 20:
             # Extract controller ID
             controller_id = int.from_bytes(data[0:4], 'big')
-            device_index = int.from_bytes(data[4:6], 'big')
-            # Let's try to find the device using controller ID and device index
+            # Extract device index (mesh_id) using 'little' endianness
+            device_index = int.from_bytes(data[4:6], 'little')
+            _LOGGER.debug(f"Packet data: {hexdump(data)}")
+            _LOGGER.debug(f"Controller ID: {controller_id}, Device Index (Mesh ID): {device_index}")
     
-            # Map device_index back to device_id
-            # In your devices, you have mesh_id_int, which is device_index
-            # So we need to find the device with mesh_id_int == device_index
-    
+            # Find the device using mesh_id
             device = None
             for dev in self.cync_switches.values():
-                if dev.mesh_id_int == device_index:
+                if dev.mesh_id == device_index:
                     device = dev
                     break
             if not device:
-                _LOGGER.warning(f"No device found with mesh_id_int {device_index}")
+                _LOGGER.warning(f"No device found with mesh_id {device_index}")
                 return
     
             # Extract power status
             power_status = bool(data[8])
-            # Extract brightness (assuming it's in percentage 0-100)
+            # Extract brightness
             brightness = data[9]
             # Extract color temperature
             color_temp = data[10]
@@ -311,8 +295,7 @@ class CyncHub:
             g = data[12]
             b = data[13]
     
-            _LOGGER.debug(f"Device ID: {device.device_id}, Controller ID: {controller_id}, Mesh ID: {device_index}")
-            _LOGGER.debug(f"Power Status: {power_status}, Brightness: {brightness}, Color Temp: {color_temp}, RGB: ({r}, {g}, {b})")
+            _LOGGER.debug(f"Device ID: {device.device_id}, Power Status: {power_status}, Brightness: {brightness}, Color Temp: {color_temp}, RGB: ({r}, {g}, {b})")
     
             # Update the device state
             device.update_switch(
@@ -324,41 +307,41 @@ class CyncHub:
         else:
             _LOGGER.error("Invalid packet data for packet type 4.")
 
-
     async def process_type_8_packet(self, is_response: bool, data: bytes) -> None:
         """Process packet type 8 (Iteration Request)."""
         _LOGGER.debug("Processing packet type 8 (Iteration Request).")
-    
-        # It's possible that this packet contains updates about device states
+        
         if len(data) >= 20:
             # Extract controller ID
             controller_id = int.from_bytes(data[0:4], 'big')
-            device_index = int.from_bytes(data[4:6], 'big')
-            # Continue parsing as per actual data
-    
+            # Extract device index (mesh_id) using 'little' endianness
+            device_index = int.from_bytes(data[4:6], 'little')
             _LOGGER.debug(f"Iteration Request data: {hexdump(data)}")
-    
+            _LOGGER.debug(f"Controller ID: {controller_id}, Device Index (Mesh ID): {device_index}")
+        
             # Find the device
             device = None
             for dev in self.cync_switches.values():
-                if dev.mesh_id_int == device_index:
+                if dev.mesh_id == device_index:
                     device = dev
                     break
             if not device:
-                _LOGGER.warning(f"No device found with mesh_id_int {device_index}")
+                _LOGGER.warning(f"No device found with mesh_id {device_index}")
                 return
-    
-            # Parse the rest of the data
-            # Extract power status, brightness, color temp, RGB, etc.
-    
-            # For now, let's assume similar structure to type 4
+        
+            # Extract power status
             power_status = bool(data[8])
+            # Extract brightness
             brightness = data[9]
+            # Extract color temperature
             color_temp = data[10]
+            # Extract RGB values
             r = data[11]
             g = data[12]
             b = data[13]
-    
+        
+            _LOGGER.debug(f"Device ID: {device.device_id}, Power Status: {power_status}, Brightness: {brightness}, Color Temp: {color_temp}, RGB: ({r}, {g}, {b})")
+        
             # Update the device state
             device.update_switch(
                 state=power_status,
@@ -368,9 +351,6 @@ class CyncHub:
             )
         else:
             _LOGGER.error("Invalid packet data for packet type 8.")
-
-
-
 
     async def process_pipe_packet(self, is_response: bool, data: bytes) -> None:
         """Process PIPE packets."""
@@ -584,7 +564,6 @@ class CyncRoom:
         self.home_name = room_info.get('home_name', 'unknown')
         self.parent_room = room_info.get('parent_room', 'unknown')
         self.mesh_id = int(room_info.get('mesh_id', 0)).to_bytes(2, 'little')
-        self.mesh_id_int = int.from_bytes(self.mesh_id, 'big')
         self.power_state = False
         self.brightness = 0
         self.color_temp_kelvin = 0
@@ -696,7 +675,7 @@ class CyncRoom:
             status_packet = self.hub.create_set_status_packet(
                 controller,
                 seq_status,
-                device_index=self.mesh_id_int,  # Use mesh_id_int
+                device_index=self.mesh_id,  # Use mesh_id
                 status=1
             )
             await self.hub.send_request(status_packet, self.command_received, device=self, action='turn_on_or_off', desired_state=True)
@@ -707,7 +686,7 @@ class CyncRoom:
                 brightness_packet = self.hub.create_set_brightness_packet(
                     controller,
                     seq_brightness,
-                    device_index=self.mesh_id_int,  # Use mesh_id_int
+                    device_index=self.mesh_id,  # Use mesh_id
                     brightness=brightness_value
                 )
                 await self.hub.send_request(brightness_packet, self.command_received, device=self, action='set_brightness', brightness=brightness_value)
@@ -718,7 +697,7 @@ class CyncRoom:
                 color_temp_packet = self.hub.create_set_ct_packet(
                     controller,
                     seq_ct,
-                    device_index=self.mesh_id_int,  # Use mesh_id_int
+                    device_index=self.mesh_id,  # Use mesh_id
                     ct=color_temp
                 )
                 await self.hub.send_request(color_temp_packet, self.command_received, device=self, action='set_color_temp', color_temp_kelvin=color_temp_kelvin)
@@ -749,7 +728,7 @@ class CyncRoom:
             status_packet = self.hub.create_set_status_packet(
                 controller,
                 seq,
-                device_index=self.mesh_id_int,  # Use mesh_id_int
+                device_index=self.mesh_id,  # Use mesh_id
                 status=0
             )
             await self.hub.send_request(status_packet, self.command_received, device=self, action='turn_on_or_off', desired_state=False)
@@ -878,7 +857,6 @@ class CyncSwitch:
         self.name = switch_info.get('name', 'unknown')
         self.home_name = switch_info.get('home_name', 'unknown')
         self.mesh_id = switch_info.get('mesh_id', 0).to_bytes(2, 'little')
-        self.mesh_id_int = int.from_bytes(self.mesh_id, 'big')
         self.room = room
         self.power_state = False
         self.brightness = 0
@@ -940,14 +918,14 @@ class CyncSwitch:
             controller = int(self.controllers[attempts % len(self.controllers)] if self.controllers else self.default_controller)
     
             # Send Set Status (On)
-            status_packet = self.hub.create_set_status_packet(controller, seq_status, self.mesh_id_int, 1)
+            status_packet = self.hub.create_set_status_packet(controller, seq_status, self.mesh_id, 1)
             await self.hub.send_request(status_packet, self.command_received)
     
             # Handle brightness
             if self.support_brightness and brightness is not None:
                 seq_brightness = await self.hub.get_seq_num()
                 brightness_value = max(0, min(100, round((brightness / 255) * 100)))
-                brightness_packet = self.hub.create_set_brightness_packet(controller, seq_brightness, self.mesh_id_int, brightness_value)
+                brightness_packet = self.hub.create_set_brightness_packet(controller, seq_brightness, self.mesh_id, brightness_value)
                 await self.hub.send_request(brightness_packet, self.command_received)
     
             # Handle color temperature
@@ -956,14 +934,14 @@ class CyncSwitch:
                 color_temp = max(0, min(100, round(
                     ((color_temp_kelvin - self.min_color_temp_kelvin) /
                     (self.max_color_temp_kelvin - self.min_color_temp_kelvin)) * 100)))
-                ct_packet = self.hub.create_set_ct_packet(controller, seq_ct, self.mesh_id_int, color_temp)
+                ct_packet = self.hub.create_set_ct_packet(controller, seq_ct, self.mesh_id, color_temp)
                 await self.hub.send_request(ct_packet, self.command_received)
     
             # Handle RGB color
             if self.support_rgb and rgb_color is not None:
                 seq_rgb = await self.hub.get_seq_num()
                 r, g, b = [max(0, min(255, val)) for val in rgb_color]
-                rgb_packet = self.hub.create_set_rgb_packet(controller, seq_rgb, self.mesh_id_int, r, g, b)
+                rgb_packet = self.hub.create_set_rgb_packet(controller, seq_rgb, self.mesh_id, r, g, b)
                 await self.hub.send_request(rgb_packet, self.command_received)
     
             # Wait for acknowledgments
@@ -995,7 +973,7 @@ class CyncSwitch:
             controller = int(self.controllers[attempts % len(self.controllers)] if self.controllers else self.default_controller)
     
             # Send Set Status (Off)
-            status_packet = self.hub.create_set_status_packet(controller, seq, self.mesh_id_int, 0)
+            status_packet = self.hub.create_set_status_packet(controller, seq, self.mesh_id, 0)
             await self.hub.send_request(status_packet, self.command_received)
     
             # Wait for acknowledgment
