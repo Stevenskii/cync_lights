@@ -327,13 +327,14 @@ class CyncHub:
             # Packet is shorter but may contain minimal data
     
             # Extract device index (mesh_id) from data[4:6]
-            device_index = int.from_bytes(data[4:6], 'little')
+            device_index = data[5]
     
             # Extract power status from data[6]
             power_status_byte = data[6]
             power_status = bool(power_status_byte & 0x01)
     
-            _LOGGER.debug(f"Controller ID: {controller_id}, Device Index (Mesh ID): {device_index}, Power Status: {power_status}")
+            _LOGGER.debug(f"Packet data: {hexdump(data)}")
+            _LOGGER.debug(f"Controller ID: {controller_id}, Raw Device Index Bytes: {data[4:6].hex()}, Parsed Device Index: {device_index}")
     
             # Find the device using mesh_id
             device = next((dev for dev in self.cync_switches.values() if dev.mesh_id == device_index), None)
