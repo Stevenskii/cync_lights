@@ -774,7 +774,7 @@ class CyncRoom:
 
                 # Send Set Status (On)
                 status_packet = self.hub.create_set_status_packet(
-                    controller=controller,
+                    controller_id=controller,
                     seq=seq_status,
                     device_index=self.mesh_id,
                     status=1  # 1 to turn on
@@ -795,7 +795,7 @@ class CyncRoom:
                     brightness_value = max(0, min(100, round((brightness / 255) * 100)))
                     seq_brightness = await self.hub.get_seq_num()
                     brightness_packet = self.hub.create_set_brightness_packet(
-                        controller=controller,
+                        controller_id=controller,
                         seq=seq_brightness,
                         device_index=self.mesh_id,
                         brightness=brightness_value
@@ -816,7 +816,7 @@ class CyncRoom:
                     )))
                     seq_ct = await self.hub.get_seq_num()
                     ct_packet = self.hub.create_set_ct_packet(
-                        controller=controller,
+                        controller_id=controller,
                         seq=seq_ct,
                         device_index=self.mesh_id,
                         ct=color_temp_scaled
@@ -833,7 +833,7 @@ class CyncRoom:
                     r, g, b = [max(0, min(255, val)) for val in rgb_color]
                     seq_rgb = await self.hub.get_seq_num()
                     rgb_packet = self.hub.create_set_rgb_packet(
-                        controller=controller,
+                        controller_id=controller,
                         seq=seq_rgb,
                         device_index=self.mesh_id,
                         r=r,
@@ -889,7 +889,7 @@ class CyncRoom:
 
                 # Send Set Status (Off)
                 status_packet = self.hub.create_set_status_packet(
-                    controller=controller,
+                    controller_id=controller,
                     seq=seq,
                     device_index=self.mesh_id,
                     status=0  # 0 to turn off
@@ -1112,7 +1112,7 @@ class CyncSwitch:
 
                 # Send Set Status (On)
                 status_packet = self.hub.create_set_status_packet(
-                    controller=controller,
+                    controller_id=controller,
                     seq=seq_status,
                     device_index=self.mesh_id,
                     status=1  # 1 to turn on
@@ -1133,7 +1133,7 @@ class CyncSwitch:
                     brightness_value = max(0, min(100, round((brightness / 255) * 100)))
                     seq_brightness = await self.hub.get_seq_num()
                     brightness_packet = self.hub.create_set_brightness_packet(
-                        controller=controller,
+                        controller_id=controller,
                         seq=seq_brightness,
                         device_index=self.mesh_id,
                         brightness=brightness_value
@@ -1154,7 +1154,7 @@ class CyncSwitch:
                     )))
                     seq_ct = await self.hub.get_seq_num()
                     ct_packet = self.hub.create_set_ct_packet(
-                        controller=controller,
+                        controller_id=controller,
                         seq=seq_ct,
                         device_index=self.mesh_id,
                         ct=color_temp_scaled
@@ -1171,7 +1171,7 @@ class CyncSwitch:
                     r, g, b = [max(0, min(255, val)) for val in rgb_color]
                     seq_rgb = await self.hub.get_seq_num()
                     rgb_packet = self.hub.create_set_rgb_packet(
-                        controller=controller,
+                        controller_id=controller,
                         seq=seq_rgb,
                         device_index=self.mesh_id,
                         r=r,
@@ -1228,7 +1228,7 @@ class CyncSwitch:
 
                 # Send Set Status (Off)
                 status_packet = self.hub.create_set_status_packet(
-                    controller=controller,
+                    controller_id=controller,
                     seq=seq,
                     device_index=self.mesh_id,
                     status=0  # 0 to turn off
