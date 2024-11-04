@@ -396,6 +396,54 @@ class CyncHub:
         else:
             _LOGGER.error("Invalid packet data for packet type 8.")
 
+    def parse_pipe_packet(data: bytes) -> Dict[str, Any]:
+        """Parse PIPE packet data and return a dictionary of extracted values."""
+        parsed = {}
+        
+        # Controller ID
+        if len(data) >= 4:
+            parsed['controller_id'] = int.from_bytes(data[0:4], 'big')
+        else:
+            parsed['controller_id'] = None
+        
+        # Mesh ID
+        if len(data) >= 21:
+            parsed['mesh_id'] = int.from_bytes(data[19:21], 'little')
+        else:
+            parsed['mesh_id'] = None
+        
+        # Power Status
+        if len(data) > 8:
+            parsed['power_status'] = bool(data[8] & 0x01)
+        else:
+            parsed['power_status'] = False
+        
+        # Brightness
+        if len(data) > 9:
+            brightness_raw = data[9]
+            parsed['brightness'] = max(0, min(100, round((brightness_raw / 255) * 100)))
+        else:
+            parsed['brightness'] = 0
+        
+        # Color Temperature
+        if len(data) > 10:
+            color_temp_raw = data[10]
+            parsed['color_temp_kelvin'] = max(2000, min(7000, 2000 + (color_temp_raw * 50)))  # Placeholder conversion
+        else:
+            parsed['color_temp_kelvin'] = None
+        
+        # RGB
+        if len(data) >= 14:
+            parsed['rgb'] = {
+                'r': data[11],
+                'g': data[12],
+                'b': data[13]
+            }
+        else:
+            parsed['rgb'] = {'r': 0, 'g': 0, 'b': 0}
+        
+        return parsed
+
     async def process_pipe_packet(self, is_response: bool, data: bytes) -> None:
         """Process PIPE packets."""
         if is_response:
@@ -408,52 +456,23 @@ class CyncHub:
         else:
             _LOGGER.debug(f"Processing PIPE request with data: {hexdump(data)}")
 
-            # Adjusted to handle varying packet lengths
-            try:
-                # Example: Minimum expected length (adjust based on actual protocol)
-                if len(data) < 19:
-                    _LOGGER.error("PIPE packet data too short to parse")
-                    return
-
-                # Extract Controller ID (Bytes 0-3, big endian)
-                controller_id = int.from_bytes(data[0:4], 'big')
-
-                # Extract Device Index (Mesh ID) (Bytes 19-20, little endian)
-                mesh_id_bytes = data[19:21]
-                mesh_id = int.from_bytes(mesh_id_bytes, 'little')
-
-                _LOGGER.debug(f"Extracted mesh_id_bytes: {mesh_id_bytes.hex()}, interpreted mesh_id: {mesh_id}")
-
-                # Extract Power Status (Byte 8)
-                power_status = bool(data[8] & 0x01)
-
-                # Extract Brightness (Byte 9)
-                brightness_raw = data[9]
-                brightness = max(0, min(100, round((brightness_raw / 255) * 100)))
-
-                # Extract Color Temperature (Byte 10)
-                color_temp_raw = data[10]
-                _LOGGER.debug(f"Extracted color_temp_raw: {color_temp_raw}")
-                # Convert color_temp_raw to Kelvin as per device specifications
-                # Placeholder conversion, adjust based on actual device protocol
-                color_temp_kelvin = 2000 + (color_temp_raw * (7000 - 2000) // 100)
-
-                # Extract RGB Values (Bytes 11-13)
-                r, g, b = data[11], data[12], data[13]
-
-                # Find the device using mesh_id
-                device = next((dev for dev in self.cync_switches.values() if dev.mesh_id == mesh_id), None)
-                if not device:
-                    _LOGGER.warning(f"No device found with mesh_id {mesh_id}")
-                    return
-
-                # Update the device state
-                device.update_switch(
-                    state=power_status,
-                    brightness=brightness,
-                    color_temp=color_temp_kelvin,
-                    rgb={'r': r, 'g': g, 'b': b}
-                )
+            parsed_data = parse_pipe_packet(data)
+            
+            if not parsed_data.get('mesh_id'):
+                _LOGGER.error("Cannot parse PIPE packet without mesh_id.")
+                return
+            
+            device = next((dev for dev in self.cync_switches.values() if dev.mesh_id == parsed_data['mesh_id']), None)
+            if not device:
+                _LOGGER.warning(f"No device found with mesh_id {parsed_data['mesh_id']}")
+                return
+            
+            device.update_switch(
+                state=parsed_data.get('power_status', False),
+                brightness=parsed_data.get('brightness', 0),
+                color_temp=parsed_data.get('color_temp_kelvin'),
+                rgb=parsed_data.get('rgb', {'r': 0, 'g': 0, 'b': 0})
+            )
 
             except Exception as e:
                 _LOGGER.error(f"Failed to parse PIPE packet: {e}", exc_info=True)
