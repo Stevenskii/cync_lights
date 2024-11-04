@@ -474,9 +474,6 @@ class CyncHub:
                 rgb=parsed_data.get('rgb', {'r': 0, 'g': 0, 'b': 0})
             )
 
-            except Exception as e:
-                _LOGGER.error(f"Failed to parse PIPE packet: {e}", exc_info=True)
-
     def update_device_state(self, device_id: int, **kwargs):
         """Update the state of a device."""
         # Find the device object using the device_id
