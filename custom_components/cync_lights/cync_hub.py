@@ -406,7 +406,7 @@ class CyncHub:
             if len(data) >= 6:
                 seq_num = struct.unpack(">H", data[4:6])[0]
                 _LOGGER.debug(f"Acknowledgment received for sequence {seq_num}")
-                self.execute_callback(seq_num)
+                await self.execute_callback(seq_num)  # Await the coroutine
             else:
                 _LOGGER.error("Invalid acknowledgment packet")
         else:
@@ -435,14 +435,25 @@ class CyncHub:
                 
                 # Extract Color Temperature (Byte 13)
                 color_temp_raw = data[13]
-                # Scale color temperature if necessary (e.g., 0-255 to 2000K-7000K)
-                color_temp_kelvin = max(self.hub.min_color_temp_kelvin,
-                                        min(self.hub.max_color_temp_kelvin,
-                                            round(
-                                                (color_temp_raw / 255) * 
-                                                (self.hub.max_color_temp_kelvin - self.hub.min_color_temp_kelvin) 
-                                                + self.hub.min_color_temp_kelvin
-                                            )))
+                
+                # Find the device using mesh_id
+                device = next((dev for dev in self.cync_switches.values() if dev.mesh_id == device_index), None)
+                if not device:
+                    _LOGGER.warning(f"No device found with mesh_id {device_index}")
+                    return
+                
+                # Scale color temperature based on device's supported range
+                color_temp_kelvin = max(
+                    device.min_color_temp_kelvin,
+                    min(
+                        device.max_color_temp_kelvin,
+                        round(
+                            (color_temp_raw / 255) * 
+                            (device.max_color_temp_kelvin - device.min_color_temp_kelvin) 
+                            + device.min_color_temp_kelvin
+                        )
+                    )
+                )
                 
                 # Extract RGB Values (Bytes 14-16)
                 r = data[14]
@@ -461,12 +472,6 @@ class CyncHub:
                 _LOGGER.debug(f"Controller ID: {controller_id}, Device Index (Mesh ID): {device_index}")
                 _LOGGER.debug(f"Power Status: {power_status}, Brightness: {brightness}, "
                             f"Color Temp (K): {color_temp_kelvin}, RGB: ({r}, {g}, {b})")
-                
-                # Find the device using mesh_id
-                device = next((dev for dev in self.cync_switches.values() if dev.mesh_id == device_index), None)
-                if not device:
-                    _LOGGER.warning(f"No device found with mesh_id {device_index}")
-                    return
                 
                 # Update the device state with extracted data
                 device.update_switch(
