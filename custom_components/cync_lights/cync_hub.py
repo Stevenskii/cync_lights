@@ -406,14 +406,14 @@ class CyncHub:
             if len(data) >= 6:
                 seq_num = struct.unpack(">H", data[4:6])[0]
                 _LOGGER.debug(f"Acknowledgment received for sequence {seq_num}")
-                await self.execute_callback(seq_num)  # Await the coroutine
+                await self.execute_callback(seq_num)
             else:
                 _LOGGER.error("Invalid acknowledgment packet")
         else:
             _LOGGER.debug(f"Processing PIPE request with data: {hexdump(data)}")
             
             # Ensure the data length is sufficient
-            if len(data) < 19:
+            if len(data) < 37:
                 _LOGGER.error("PIPE packet data too short to parse")
                 return
             
@@ -421,66 +421,41 @@ class CyncHub:
                 # Extract Controller ID (Bytes 0-3, big endian)
                 controller_id = int.from_bytes(data[0:4], 'big')
                 
-                # Extract Device Index (Mesh ID) (Bytes 4-5, little endian)
-                device_index = int.from_bytes(data[4:6], 'little')
+                # Extract Device Index (Mesh ID) (Bytes 19-20, little endian)
+                mesh_id_bytes = data[19:21]
+                mesh_id = int.from_bytes(mesh_id_bytes, 'little')
                 
-                # Extract Status Flags (Byte 6)
-                status_flags = data[6]
-                power_status = bool(status_flags & 0x01)  # Assuming LSB indicates power status
+                _LOGGER.debug(f"Extracted mesh_id_bytes: {mesh_id_bytes.hex()}, interpreted mesh_id: {mesh_id}")
                 
-                # Extract Brightness (Byte 12)
-                brightness_raw = data[12]
-                # Scale brightness if necessary (e.g., 0-255 to 0-100)
+                # Extract Power Status (Byte 8)
+                power_status = bool(data[8] & 0x01)
+                
+                # Extract Brightness (Byte 9)
+                brightness_raw = data[9]
                 brightness = max(0, min(100, round((brightness_raw / 255) * 100)))
                 
-                # Extract Color Temperature (Byte 13)
-                color_temp_raw = data[13]
+                # Extract Color Temperature (Byte 10)
+                color_temp_raw = data[10]
+                _LOGGER.debug(f"Extracted color_temp_raw: {color_temp_raw}")
+                # Convert color_temp_raw to Kelvin as per device specifications
+                
+                # Extract RGB Values (Bytes 11-13)
+                r, g, b = data[11], data[12], data[13]
                 
                 # Find the device using mesh_id
-                device = next((dev for dev in self.cync_switches.values() if dev.mesh_id == device_index), None)
+                device = next((dev for dev in self.cync_switches.values() if dev.mesh_id == mesh_id), None)
                 if not device:
-                    _LOGGER.warning(f"No device found with mesh_id {device_index}")
+                    _LOGGER.warning(f"No device found with mesh_id {mesh_id}")
                     return
                 
-                # Scale color temperature based on device's supported range
-                color_temp_kelvin = max(
-                    device.min_color_temp_kelvin,
-                    min(
-                        device.max_color_temp_kelvin,
-                        round(
-                            (color_temp_raw / 255) * 
-                            (device.max_color_temp_kelvin - device.min_color_temp_kelvin) 
-                            + device.min_color_temp_kelvin
-                        )
-                    )
-                )
-                
-                # Extract RGB Values (Bytes 14-16)
-                r = data[14]
-                g = data[15]
-                b = data[16]
-                
-                # Optional: Verify Checksum (Byte 17)
-                # checksum_received = data[17]
-                # Calculate checksum based on the protocol's checksum calculation method
-                # checksum_calculated = (sum(data[:17]) % 256)
-                # if checksum_received != checksum_calculated:
-                #     _LOGGER.warning(f"Checksum mismatch: received {checksum_received}, calculated {checksum_calculated}")
-                #     return  # Disregard packet due to checksum failure
-                
-                # Log the extracted values
-                _LOGGER.debug(f"Controller ID: {controller_id}, Device Index (Mesh ID): {device_index}")
-                _LOGGER.debug(f"Power Status: {power_status}, Brightness: {brightness}, "
-                            f"Color Temp (K): {color_temp_kelvin}, RGB: ({r}, {g}, {b})")
-                
-                # Update the device state with extracted data
+                # Update the device state
                 device.update_switch(
                     state=power_status,
                     brightness=brightness,
-                    color_temp=color_temp_kelvin,
+                    color_temp=color_temp_kelvin,  # Convert as needed
                     rgb={'r': r, 'g': g, 'b': b}
                 )
-            
+                
             except Exception as e:
                 _LOGGER.error(f"Failed to parse PIPE packet: {e}", exc_info=True)
 
