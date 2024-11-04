@@ -72,6 +72,7 @@ class InvalidCyncConfiguration(Exception):
 PACKET_TYPE_REQUEST = 0x73  # Status and brightness request
 PACKET_TYPE_PING = 0x0D  # 13 in decimal
 PACKET_TYPE_PIPE = 0x07  # 7 in decimal
+PACKET_TYPE_UNKNOWN = 0x03
 
 # Pipe types (from cync-lan)
 PACKET_PIPE_TYPE_SET_STATUS = 0xD0  # Set status (on/off)
@@ -225,11 +226,11 @@ class CyncHub:
                 data = await self.reader.read(1024)
                 if not data:
                     raise LostConnection("Connection closed by server")
-
+    
                 self.buffer += data
                 while len(self.buffer) >= 5:
                     header = self.buffer[:5]
-                    packet_type, is_response = (header[0] & 0XF0) >> 4, (header[0] & 0x08) != 0
+                    packet_type, is_response = (header[0] & 0xF0) >> 4, (header[0] & 0x08) != 0
                     packet_length = struct.unpack(">I", header[1:5])[0]
                     if len(self.buffer) < 5 + packet_length:
                         break
@@ -243,10 +244,10 @@ class CyncHub:
                 await asyncio.sleep(5)
                 
     async def handle_packet(self, packet_type: int, is_response: bool, packet_data: bytes) -> None:
-        """Handle incoming packets based on their type."""
+        _LOGGER.debug(f"Handling packet_type: {packet_type}, is_response: {is_response}, data: {hexdump(packet_data)}")
         if packet_type == PACKET_TYPE_PING:
             _LOGGER.debug("Received PING packet.")
-            # Optionally, respond to the PING if necessary
+            # Handle PING
         elif packet_type == PACKET_TYPE_PIPE:
             _LOGGER.debug("Received PIPE packet.")
             await self.process_pipe_packet(is_response, packet_data)
@@ -256,9 +257,19 @@ class CyncHub:
         elif packet_type == 0x08:
             _LOGGER.debug("Received packet type 8 (Iteration Request).")
             await self.process_type_8_packet(is_response, packet_data)
+        elif packet_type == PACKET_TYPE_UNKNOWN:
+            _LOGGER.debug("Received UNKNOWN packet type: 3")
+            # Example: Parse acknowledgment
+            if len(packet_data) >= 2:
+                ack_seq = struct.unpack(">H", packet_data[:2])[0]
+                _LOGGER.debug(f"Acknowledgment received for sequence {ack_seq}")
+                self.execute_callback(ack_seq)
+            else:
+                _LOGGER.error("Invalid UNKNOWN packet structure.")
         else:
             _LOGGER.warning(f"Unhandled packet type: {packet_type}")
             _LOGGER.debug(f"Packet data ({len(packet_data)} bytes): {hexdump(packet_data)}")
+
 
     async def process_type_4_packet(self, is_response: bool, data: bytes) -> None:
         """Process packet type 4 (Initial Client State)."""
