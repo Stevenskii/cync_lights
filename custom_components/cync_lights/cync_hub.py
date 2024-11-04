@@ -1,5 +1,4 @@
 import logging
-import threading
 import asyncio
 import struct
 import aiohttp
@@ -8,6 +7,7 @@ import ssl
 import traceback
 import time
 from typing import Any, Callable, Dict, List, Optional, Tuple
+import json
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -23,30 +23,30 @@ Capabilities = {
               49, 51, 52, 53, 54, 55, 56, 57, 58, 59, 61, 62, 63, 64, 65, 66, 67,
               68, 80, 81, 82, 83, 85, 128, 129, 130, 131, 132, 133, 134, 135, 136,
               137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149,
-              150, 151, 152, 153, 154, 155, 156, 158, 159, 160, 161, 162, 163,
-              164, 165, 169, 170],
+              150, 151, 152, 153, 154, 156, 158, 159, 160, 161, 162, 163,
+              164, 165],
     "BRIGHTNESS": [1, 5, 6, 7, 8, 9, 10, 11, 13, 14, 15, 17, 18, 19, 20, 21, 22,
                    23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37,
                    48, 49, 55, 56, 80, 81, 82, 83, 85, 128, 129, 130, 131, 132,
                    133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144,
-                   145, 146, 147, 148, 149, 150, 151, 152, 153, 154, 155, 156,
-                   158, 159, 160, 161, 162, 163, 164, 165, 169, 170],
+                   145, 146, 147, 148, 149, 150, 151, 152, 153, 154, 156,
+                   158, 159, 160, 161, 162, 163, 164, 165],
     "COLORTEMP": [5, 6, 7, 8, 10, 11, 14, 15, 19, 20, 21, 22, 23, 25, 26, 28,
                   29, 30, 31, 32, 33, 34, 35, 80, 82, 83, 85, 129, 130, 131, 132,
                   133, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145,
-                  146, 147, 153, 154, 155, 156, 158, 159, 160, 161, 162, 163,
-                  164, 165, 169, 170],
+                  146, 147, 153, 154, 156, 158, 159, 160, 161, 162, 163,
+                  164, 165],
     "RGB": [6, 7, 8, 21, 22, 23, 30, 31, 32, 33, 34, 35, 131, 132, 133, 137,
-            138, 139, 140, 141, 142, 143, 146, 147, 153, 154, 155, 156, 158,
-            159, 160, 161, 162, 163, 164, 165, 169, 170],
+            138, 139, 140, 141, 142, 143, 146, 147, 153, 154, 156, 158, 159,
+            160, 161, 162, 163, 164, 165],
     "MOTION": [37, 49, 54],
     "AMBIENT_LIGHT": [37, 49, 54],
     "WIFICONTROL": [36, 37, 38, 39, 40, 48, 49, 51, 52, 53, 54, 55, 56, 57,
                     58, 59, 61, 62, 63, 64, 65, 66, 67, 68, 80, 81, 128, 129,
                     130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140,
                     141, 142, 143, 144, 145, 146, 147, 148, 149, 150, 151,
-                    152, 153, 154, 155, 156, 158, 159, 160, 161, 162, 163,
-                    164, 165, 169, 170],
+                    152, 153, 154, 156, 158, 159, 160, 161, 162, 163,
+                    164, 165],
     "PLUG": [64, 65, 66, 67, 68],
     "FAN": [81],
     "MULTIELEMENT": {'67': 2}
@@ -117,7 +117,6 @@ class Packet:
     def __str__(self):
         return f"Packet(type=0x{self.type:02X}, response={self.is_response}, data={self.data.hex()})"
 
-
 def hexdump(data):
     return ' '.join(f'{byte:02X}' for byte in data)
 
@@ -179,37 +178,37 @@ class CyncHub:
         while not self.shutting_down:
             try:
                 await self.setup_ssl_context()  # Setup SSL context asynchronously
-                
+
                 # Attempt to establish a secure connection
                 try:
                     _LOGGER.debug("Trying to establish SSL connection on port 23779.")
                     self.reader, self.writer = await asyncio.open_connection(self.host, self.port, ssl=self.ssl_context)
-                except Exception:
-                    _LOGGER.debug("SSL connection failed. Retrying with SSL context check disabled.")
+                except Exception as e:
+                    _LOGGER.debug(f"SSL connection failed: {e}. Retrying with SSL context check disabled.")
                     if self.ssl_context:
                         self.ssl_context.check_hostname = False
                         self.ssl_context.verify_mode = ssl.CERT_NONE
                     try:
                         self.reader, self.writer = await asyncio.open_connection(self.host, self.port, ssl=self.ssl_context)
-                    except Exception:
-                        _LOGGER.debug("SSL context failed. Falling back to unsecured connection.")
-                        self.reader, self.writer = await asyncio.open_connection(self.host, 23778)
-                
+                    except Exception as e:
+                        _LOGGER.debug(f"Retrying without SSL context: {e}. Falling back to unsecured connection.")
+                        self.reader, self.writer = await asyncio.open_connection(self.host, DEFAULT_PORT)
+
                 _LOGGER.debug("TCP connection established.")
-    
+
                 # Send login code
                 self.writer.write(self.login_code)
                 await self.writer.drain()
                 _LOGGER.debug(f"Sent login code: {self.login_code.hex()}")
-    
+
                 # Await login response
                 login_response = await self.reader.read(1000)
                 _LOGGER.debug(f"Login response: {login_response.hex()}")
-    
+
                 if not login_response:
                     _LOGGER.error("Authentication failed: no response from server")
                     raise Exception("Authentication failed: no response from server")
-    
+
                 # Process login response
                 if login_response.startswith(b'\x18\x00\x00\x00\x02\x00\x00'):
                     self.logged_in = True
@@ -217,11 +216,11 @@ class CyncHub:
                 else:
                     _LOGGER.error(f"Authentication failed with response data: {login_response.hex()}")
                     raise Exception("Authentication failed with response data.")
-    
+
                 # Create tasks for handling TCP messages and other maintenance tasks
                 read_tcp_messages = asyncio.create_task(self.read_tcp_messages(), name="Read TCP Messages")
                 # Additional tasks can be added here if needed
-    
+
                 # Wait for the read_tcp_messages task to complete
                 await read_tcp_messages
             except Exception as e:
@@ -240,7 +239,7 @@ class CyncHub:
                 self.buffer += data
                 while len(self.buffer) >= 5:
                     header = self.buffer[:5]
-                    packet_type, is_response = (header[0] & 0XF0) >> 4, (header[0] & 0x08) != 0
+                    packet_type, is_response = (header[0] & 0xF0) >> 4, (header[0] & 0x08) != 0
                     packet_length = struct.unpack(">I", header[1:5])[0]
                     if len(self.buffer) < 5 + packet_length:
                         break
@@ -248,11 +247,12 @@ class CyncHub:
                     self.buffer = self.buffer[5 + packet_length:]
                     await self.handle_packet(packet_type, is_response, packet_data)
             except LostConnection:
+                _LOGGER.warning("Lost connection to the server.")
                 break
             except Exception as e:
                 _LOGGER.error(f"Error while reading TCP messages: {e}")
                 await asyncio.sleep(5)
-                
+
     async def handle_packet(self, packet_type: int, is_response: bool, packet_data: bytes) -> None:
         """Handle incoming packets based on their type."""
         if packet_type == PACKET_TYPE_PING:
@@ -275,56 +275,56 @@ class CyncHub:
         """Process packet type 4 (Initial Client State)."""
         _LOGGER.debug("Processing packet type 4 (Initial Client State).")
         _LOGGER.debug(f"Packet data: {hexdump(data)}")
-    
+
         # Ensure there is enough data to extract the controller ID
         if len(data) < 4:
             _LOGGER.error("Packet data too short to extract controller ID.")
             return
-    
+
         # Extract controller ID
         controller_id = int.from_bytes(data[0:4], 'big')
-    
+
         # Initialize variables
         device_index = None
         power_status = None
         brightness = None
         color_temp = None
         r = g = b = None
-    
+
         if len(data) >= 22:
             # Packet is long enough to extract all fields
-    
-            # Extract device index (mesh_id) from data[4:6]
+
+            # Extract device index (mesh_id) from data[19:21]
             device_index = int.from_bytes(data[19:21], 'little')
-    
+
             # Extract power status from data[5]
             power_status_byte = data[5]
             power_status = bool(power_status_byte & 0x01)
-    
+
             # Extract brightness from data[12]
             brightness = data[12]
-    
+
             # Extract color temperature from data[13]
             color_temp = data[13]
-    
+
             # Extract RGB values from data[14:17]
             r = data[14]
             g = data[15]
             b = data[16]
-    
+
             _LOGGER.debug(f"Controller ID: {controller_id}, Device Index (Mesh ID): {device_index}")
-    
+
             # Find the device using mesh_id
             device = next((dev for dev in self.cync_switches.values() if dev.mesh_id == device_index), None)
             if not device:
                 _LOGGER.warning(f"No device found with mesh_id {device_index}")
                 return
-    
+
             _LOGGER.debug(
                 f"Device ID: {device.device_id}, Power Status: {power_status}, "
                 f"Brightness: {brightness}, Color Temp: {color_temp}, RGB: ({r}, {g}, {b})"
             )
-    
+
             # Update the device state with available data
             device.update_switch(
                 state=power_status,
@@ -336,13 +336,13 @@ class CyncHub:
             device_index = data[4]
             power_status_byte = data[5]
             power_status = bool(power_status_byte & 0x01)
-        
+
             _LOGGER.debug(f"Packet data: {hexdump(data)}")
             _LOGGER.debug(f"Controller ID: {controller_id}")
             _LOGGER.debug(f"Extracted device_index (mesh_id): {device_index} from data[4]: {data[4]:02X}")
             _LOGGER.debug(f"Extracted power_status_byte: {power_status_byte:02X} from data[5]: {data[5]:02X}")
             _LOGGER.debug(f"Power Status: {power_status}")
-    
+
             # Find the device using mesh_id
             device = next((dev for dev in self.cync_switches.values() if dev.mesh_id == device_index), None)
             if not device:
@@ -358,7 +358,7 @@ class CyncHub:
     async def process_type_8_packet(self, is_response: bool, data: bytes) -> None:
         """Process packet type 8 (Iteration Request)."""
         _LOGGER.debug("Processing packet type 8 (Iteration Request).")
-        
+
         if len(data) >= 20:
             # Extract controller ID
             controller_id = int.from_bytes(data[0:4], 'big')
@@ -366,17 +366,13 @@ class CyncHub:
             device_index = int.from_bytes(data[21:23], 'little')
             _LOGGER.debug(f"Iteration Request data: {hexdump(data)}")
             _LOGGER.debug(f"Controller ID: {controller_id}, Device Index (Mesh ID): {device_index}")
-        
+
             # Find the device
-            device = None
-            for dev in self.cync_switches.values():
-                if dev.mesh_id == device_index:
-                    device = dev
-                    break
+            device = next((dev for dev in self.cync_switches.values() if dev.mesh_id == device_index), None)
             if not device:
                 _LOGGER.warning(f"No device found with mesh_id {device_index}")
                 return
-        
+
             # Extract power status
             power_status = bool(data[8])
             # Extract brightness
@@ -387,9 +383,9 @@ class CyncHub:
             r = data[11]
             g = data[12]
             b = data[13]
-        
+
             _LOGGER.debug(f"Device ID: {device.device_id}, Power Status: {power_status}, Brightness: {brightness}, Color Temp: {color_temp}, RGB: ({r}, {g}, {b})")
-        
+
             # Update the device state
             device.update_switch(
                 state=power_status,
@@ -411,51 +407,54 @@ class CyncHub:
                 _LOGGER.error("Invalid acknowledgment packet")
         else:
             _LOGGER.debug(f"Processing PIPE request with data: {hexdump(data)}")
-            
-            # Ensure the data length is sufficient
-            if len(data) < 37:
-                _LOGGER.error("PIPE packet data too short to parse")
-                return
-            
+
+            # Adjusted to handle varying packet lengths
             try:
+                # Example: Minimum expected length (adjust based on actual protocol)
+                if len(data) < 19:
+                    _LOGGER.error("PIPE packet data too short to parse")
+                    return
+
                 # Extract Controller ID (Bytes 0-3, big endian)
                 controller_id = int.from_bytes(data[0:4], 'big')
-                
+
                 # Extract Device Index (Mesh ID) (Bytes 19-20, little endian)
                 mesh_id_bytes = data[19:21]
                 mesh_id = int.from_bytes(mesh_id_bytes, 'little')
-                
+
                 _LOGGER.debug(f"Extracted mesh_id_bytes: {mesh_id_bytes.hex()}, interpreted mesh_id: {mesh_id}")
-                
+
                 # Extract Power Status (Byte 8)
                 power_status = bool(data[8] & 0x01)
-                
+
                 # Extract Brightness (Byte 9)
                 brightness_raw = data[9]
                 brightness = max(0, min(100, round((brightness_raw / 255) * 100)))
-                
+
                 # Extract Color Temperature (Byte 10)
                 color_temp_raw = data[10]
                 _LOGGER.debug(f"Extracted color_temp_raw: {color_temp_raw}")
                 # Convert color_temp_raw to Kelvin as per device specifications
-                
+                # Placeholder conversion, adjust based on actual device protocol
+                color_temp_kelvin = 2000 + (color_temp_raw * (7000 - 2000) // 100)
+
                 # Extract RGB Values (Bytes 11-13)
                 r, g, b = data[11], data[12], data[13]
-                
+
                 # Find the device using mesh_id
                 device = next((dev for dev in self.cync_switches.values() if dev.mesh_id == mesh_id), None)
                 if not device:
                     _LOGGER.warning(f"No device found with mesh_id {mesh_id}")
                     return
-                
+
                 # Update the device state
                 device.update_switch(
                     state=power_status,
                     brightness=brightness,
-                    color_temp=color_temp_kelvin,  # Convert as needed
+                    color_temp=color_temp_kelvin,
                     rgb={'r': r, 'g': g, 'b': b}
                 )
-                
+
             except Exception as e:
                 _LOGGER.error(f"Failed to parse PIPE packet: {e}", exc_info=True)
 
@@ -466,14 +465,13 @@ class CyncHub:
         if not device:
             _LOGGER.warning(f"Device with ID {device_id} not found.")
             return
-    
+
         # Update device attributes
         for key, value in kwargs.items():
             setattr(device, key, value)
-    
+
         # Notify about the state change
         device.publish_update()
-    
 
     async def send_request(self, packet: Packet, callback=None, *args, **kwargs):
         async def send():
@@ -497,7 +495,7 @@ class CyncHub:
         if packet.type != PACKET_TYPE_REQUEST or len(packet.data) < 6:
             return None
         return struct.unpack(">H", packet.data[4:6])[0]
-    
+
     async def execute_callback(self, seq_num: int):
         """Execute the callback associated with the given sequence number."""
         async with self.pending_commands_lock:
@@ -510,24 +508,7 @@ class CyncHub:
             else:
                 _LOGGER.warning(f"No pending command for sequence {seq_num}")
 
-
-
-
     # Packet creation methods
-    #def create_set_status_packet(self, controller_id: int, seq: int, device_index: int, status: int) -> Packet:
-    #    data = bytearray()
-    #
-    #    data.extend(struct.pack(">B", PACKET_TYPE_REQUEST))  # Packet Type (0x73 for status)
-    #    data.extend(bytes([0x00, 0x00, 0x00]))  # Zero padding
-    #    data.extend(struct.pack(">B", 0x1f))  # Packet Length
-    #    data.extend(struct.pack(">B", status))  # Status (0x01 to turn on, 0x00 to turn off)
-    #    data.extend(struct.pack(">I H", controller_id, seq))  # Controller ID and sequence number
-    #    data.extend(struct.pack(">H", device_index))  # Device index
-    #    data.extend(bytes([0x7e, 0x00, 0x00, 0x00]))  # Fixed segment
-    #    data.extend(struct.pack(">I", 0xf8d00d))  # Additional status-related bytes
-    #    data.extend(struct.pack(">B", status))  # Final status byte
-    #    _LOGGER.debug(f"Set Status Packet Data: {data.hex()}")
-    #    return Packet(PACKET_TYPE_REQUEST, False, bytes(data))
     def create_set_status_packet(self, controller_id: int, seq: int, device_index: int, status: int) -> Packet:
         # Validate inputs
         if not (0 <= controller_id <= 0xFFFFFFFF):
@@ -536,12 +517,12 @@ class CyncHub:
             raise ValueError(f"Sequence number {seq} out of range for unsigned short.")
         if status not in (0, 1):
             raise ValueError(f"Status {status} must be 0 or 1.")
-    
+
         mesh_id_bytes = device_index.to_bytes(2, 'little')
-    
+
         # Calculate checksum
         checksum = (430 + mesh_id_bytes[0] + mesh_id_bytes[1] + status) % 256
-    
+
         # Construct payload only (exclude the manual header)
         payload = (
             controller_id.to_bytes(4, 'big')
@@ -554,7 +535,7 @@ class CyncHub:
             + checksum.to_bytes(1, 'big')
             + bytes.fromhex('7e')
         )
-    
+
         _LOGGER.debug(f"Set Status Payload: {payload.hex()}")
         _LOGGER.debug(f"Controller ID: {controller_id}, Seq: {seq}, Device Index: {device_index}, Status: {status}, mesh_id_bytes: {mesh_id_bytes.hex()}, checksum: {checksum}")
         return Packet(PACKET_TYPE_REQUEST, False, payload, seq)
@@ -562,12 +543,12 @@ class CyncHub:
     def create_set_brightness_packet(self, controller_id: int, seq: int, device_index: int, brightness: int) -> Packet:
         # Ensure brightness is within 0 to 100
         brightness = max(0, min(100, brightness))
-    
+
         mesh_id_bytes = device_index.to_bytes(2, 'little')
-    
+
         # Calculate checksum
         checksum = (469 + mesh_id_bytes[0] + mesh_id_bytes[1] + brightness) % 256
-    
+
         # Construct payload only
         payload = (
             controller_id.to_bytes(4, 'big')
@@ -579,19 +560,19 @@ class CyncHub:
             + checksum.to_bytes(1, 'big')
             + bytes.fromhex('7e')
         )
-    
+
         _LOGGER.debug(f"Set Brightness Payload: {payload.hex()}")
         return Packet(PACKET_TYPE_REQUEST, False, payload, seq)
 
     def create_set_ct_packet(self, controller_id: int, seq: int, device_index: int, ct: int) -> Packet:
         # Ensure ct (color temperature) is within 0 to 100
         ct = max(0, min(100, ct))
-    
+
         mesh_id_bytes = device_index.to_bytes(2, 'little')
-    
+
         # Calculate checksum
         checksum = (469 + mesh_id_bytes[0] + mesh_id_bytes[1] + ct) % 256
-    
+
         # Construct payload only
         payload = (
             controller_id.to_bytes(4, 'big')
@@ -603,7 +584,7 @@ class CyncHub:
             + checksum.to_bytes(1, 'big')
             + bytes.fromhex('7e')
         )
-    
+
         _LOGGER.debug(f"Set Color Temperature Payload: {payload.hex()}")
         return Packet(PACKET_TYPE_REQUEST, False, payload, seq)
 
@@ -612,12 +593,12 @@ class CyncHub:
         r = max(0, min(255, r))
         g = max(0, min(255, g))
         b = max(0, min(255, b))
-    
+
         mesh_id_bytes = device_index.to_bytes(2, 'little')
-    
+
         # Calculate checksum
         checksum = (496 + mesh_id_bytes[0] + mesh_id_bytes[1] + 1 + 100 + 254 + r + g + b) % 256
-    
+
         # Construct payload only
         payload = (
             controller_id.to_bytes(4, 'big')
@@ -632,7 +613,7 @@ class CyncHub:
             + checksum.to_bytes(1, 'big')
             + bytes.fromhex('7e')
         )
-    
+
         _LOGGER.debug(f"Set RGB Payload: {payload.hex()}")
         _LOGGER.debug(f"Controller ID: {controller_id}, Seq: {seq}, Device Index: {device_index}, RGB: ({r}, {g}, {b}), checksum: {checksum}")
         return Packet(PACKET_TYPE_REQUEST, False, payload, seq)
@@ -647,7 +628,6 @@ class CyncHub:
         self.writer.close()
         await self.writer.wait_closed()
         _LOGGER.info("CyncHub has been shut down.")
-
 
 class CyncRoom:
     def __init__(self, room_id: str, room_info: Dict[str, Any], hub) -> None:
@@ -934,11 +914,11 @@ class CyncRoom:
 
         if self.support_brightness:
             total_brightness = sum(
-                self.hub.cync_switches[device_id].brightness for device_id in self.switches
+                self.hub.cync_switches[device_id].brightness for device_id in self.switches_support_brightness
             ) + sum(
-                self.hub.cync_rooms[room_id].brightness for room_id in self.subgroups
+                self.hub.cync_rooms[room_id].brightness for room_id in self.groups_support_brightness
             )
-            count = len(self.switches) + len(self.subgroups)
+            count = len(self.switches_support_brightness) + len(self.groups_support_brightness)
             _brightness = round(total_brightness / count) if count > 0 else 0
         else:
             _brightness = 100 if _power_state else 0
@@ -1200,7 +1180,6 @@ class CyncSwitch:
         if not success:
             _LOGGER.error(f"Switch '{self.name}': Failed to turn on the light after {attempts} attempts.")
 
-
     async def turn_off(self, **kwargs: Any) -> None:
         """Turn off the light."""
         _LOGGER.debug(f"Switch '{self.name}': Sending turn_off command.")
@@ -1256,7 +1235,6 @@ class CyncSwitch:
         if not success:
             _LOGGER.error(f"Switch '{self.name}': Failed to turn off the light after {attempts} attempts.")
 
-
     def command_received(self, seq: int):
         """Handle command acknowledgment from the Cync server."""
         _LOGGER.debug(f"Command received for sequence {seq}")
@@ -1264,12 +1242,12 @@ class CyncSwitch:
     def update_switch(self, state: bool, brightness: int, color_temp: Optional[int] = None, rgb: Optional[Dict[str, int]] = None):
         """Update the state of the switch as updates are received from the Cync server."""
         updated = False
-    
+
         if color_temp is not None:
             # Clamp color temperature within supported range
             self.color_temp_kelvin = max(self.min_color_temp_kelvin, min(self.max_color_temp_kelvin, color_temp))
             updated = True
-    
+
         if rgb is not None:
             # Clamp RGB values
             self.rgb = {
@@ -1278,24 +1256,23 @@ class CyncSwitch:
                 'b': max(0, min(255, rgb.get('b', self.rgb['b'])))
             }
             updated = True
-    
+
         if brightness is not None:
             # Clamp brightness within 0-100%
             self.brightness = max(0, min(100, brightness))
             updated = True
-    
+
         # Update power state only if it has changed
         if state != self.power_state:
             self.power_state = state
             updated = True
-    
+
         if updated:
             _LOGGER.debug(f"Device '{self.name}' updated: State={self.power_state}, Brightness={self.brightness}, "
                         f"Color Temp={self.color_temp_kelvin}, RGB={self.rgb}")
             self.publish_update()
             if self._update_parent_room:
                 asyncio.create_task(self._update_parent_room())
-
 
     def update_controllers(self):
         """Update the list of responsive, Wi-Fi connected controller devices."""
@@ -1306,14 +1283,14 @@ class CyncSwitch:
                 controllers.append(int(self.switch_id))
             if self.room:
                 controllers.extend(
-                    int(self.hub.cync_switches[device_id].switch_id)
-                    for device_id in self.room.all_room_switches
-                    if device_id in connected_devices and device_id != self.device_id
+                    int(self.hub.cync_switches[dev_id].switch_id)
+                    for dev_id in self.room.all_room_switches
+                    if dev_id in connected_devices and dev_id != self.device_id
                 )
             others_available = [
-                int(self.hub.cync_switches[device_id].switch_id)
-                for device_id in connected_devices
-                if int(self.hub.cync_switches[device_id].switch_id) not in controllers
+                int(self.hub.cync_switches[dev_id].switch_id)
+                for dev_id in connected_devices
+                if int(self.hub.cync_switches[dev_id].switch_id) not in controllers
             ]
             # Remove duplicates while preserving order
             unique_others = []
@@ -1331,18 +1308,15 @@ class CyncSwitch:
         if self._update_callback:
             self.hub.hass.loop.call_soon_threadsafe(self._update_callback)
 
-
 class CyncMotionSensor:
-
-    def __init__(self, device_id, device_info, room):
-
+    def __init__(self, device_id, device_info, room, hub):
         self.device_id = device_id
         self.name = device_info['name']
         self.home_name = device_info['home_name']
         self.room = room
         self.motion = False
         self._update_callback = None
-        self._hass = None
+        self.hub = hub
 
     def register(self, update_callback) -> None:
         """Register callback, called when sensor changes state."""
@@ -1360,19 +1334,15 @@ class CyncMotionSensor:
         if self._update_callback:
             self.hub.hass.loop.call_soon_threadsafe(self._update_callback)
 
-
-
 class CyncAmbientLightSensor:
-
-    def __init__(self, device_id, device_info, room):
-
+    def __init__(self, device_id, device_info, room, hub):
         self.device_id = device_id
         self.name = device_info['name']
         self.home_name = device_info['home_name']
         self.room = room
         self.ambient_light = False
         self._update_callback = None
-        self._hass = None
+        self.hub = hub
 
     def register(self, update_callback) -> None:
         """Register callback, called when sensor changes state."""
@@ -1389,7 +1359,6 @@ class CyncAmbientLightSensor:
     def publish_update(self):
         if self._update_callback:
             self.hub.hass.loop.call_soon_threadsafe(self._update_callback)
-
 
 class CyncUserData:
     """Class to handle user authentication and data retrieval."""
@@ -1497,7 +1466,7 @@ class CyncUserData:
                 and home_info['bulbsArray']
             ):
                 try:
-                    await self._process_home_info(
+                    self._process_home_info(
                         home_id,
                         home,
                         home_info,
