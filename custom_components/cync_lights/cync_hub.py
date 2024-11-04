@@ -134,7 +134,7 @@ class CyncHub:
         self.seq_num = 0
         self.seq_lock = asyncio.Lock()
         self.pending_commands = {}
-        self.pending_commands_lock = threading.Lock()
+        self.pending_commands_lock = asyncio.Lock()
 
         self.buffer = b''  # Buffer for reading TCP data
 
@@ -402,21 +402,73 @@ class CyncHub:
                 _LOGGER.error("Invalid acknowledgment packet")
         else:
             _LOGGER.debug(f"Processing PIPE request with data: {hexdump(data)}")
-            # Parse the PIPE request and update device states accordingly
-            # For example, extract device status updates and update your device states
-    
-            # Assuming the PIPE request contains device status updates
-            # You need to parse the data to extract the information
-    
-            # Example parsing (adjust as per actual data structure)
-            if len(data) >= 10:
-                # Extract relevant fields
-                # For example, device ID, status, brightness, etc.
-    
-                # This is a placeholder for actual parsing logic
-                device_id = data[0]  # Adjust index
-                status = bool(data[1])  # Adjust index
-                brightness = data[2]  # Adjust index
+            
+            # Ensure the data length is sufficient
+            if len(data) < 19:
+                _LOGGER.error("PIPE packet data too short to parse")
+                return
+            
+            try:
+                # Extract Controller ID (Bytes 0-3, big endian)
+                controller_id = int.from_bytes(data[0:4], 'big')
+                
+                # Extract Device Index (Mesh ID) (Bytes 4-5, little endian)
+                device_index = int.from_bytes(data[4:6], 'little')
+                
+                # Extract Status Flags (Byte 6)
+                status_flags = data[6]
+                power_status = bool(status_flags & 0x01)  # Assuming LSB indicates power status
+                
+                # Extract Brightness (Byte 12)
+                brightness_raw = data[12]
+                # Scale brightness if necessary (e.g., 0-255 to 0-100)
+                brightness = max(0, min(100, round((brightness_raw / 255) * 100)))
+                
+                # Extract Color Temperature (Byte 13)
+                color_temp_raw = data[13]
+                # Scale color temperature if necessary (e.g., 0-255 to 2000K-7000K)
+                color_temp_kelvin = max(self.hub.min_color_temp_kelvin,
+                                        min(self.hub.max_color_temp_kelvin,
+                                            round(
+                                                (color_temp_raw / 255) * 
+                                                (self.hub.max_color_temp_kelvin - self.hub.min_color_temp_kelvin) 
+                                                + self.hub.min_color_temp_kelvin
+                                            )))
+                
+                # Extract RGB Values (Bytes 14-16)
+                r = data[14]
+                g = data[15]
+                b = data[16]
+                
+                # Optional: Verify Checksum (Byte 17)
+                # checksum_received = data[17]
+                # Calculate checksum based on the protocol's checksum calculation method
+                # checksum_calculated = (sum(data[:17]) % 256)
+                # if checksum_received != checksum_calculated:
+                #     _LOGGER.warning(f"Checksum mismatch: received {checksum_received}, calculated {checksum_calculated}")
+                #     return  # Disregard packet due to checksum failure
+                
+                # Log the extracted values
+                _LOGGER.debug(f"Controller ID: {controller_id}, Device Index (Mesh ID): {device_index}")
+                _LOGGER.debug(f"Power Status: {power_status}, Brightness: {brightness}, "
+                            f"Color Temp (K): {color_temp_kelvin}, RGB: ({r}, {g}, {b})")
+                
+                # Find the device using mesh_id
+                device = next((dev for dev in self.cync_switches.values() if dev.mesh_id == device_index), None)
+                if not device:
+                    _LOGGER.warning(f"No device found with mesh_id {device_index}")
+                    return
+                
+                # Update the device state with extracted data
+                device.update_switch(
+                    state=power_status,
+                    brightness=brightness,
+                    color_temp=color_temp_kelvin,
+                    rgb={'r': r, 'g': g, 'b': b}
+                )
+            
+            except Exception as e:
+                _LOGGER.error(f"Failed to parse PIPE packet: {e}", exc_info=True)
 
     def update_device_state(self, device_id: int, **kwargs):
         """Update the state of a device."""
@@ -436,11 +488,19 @@ class CyncHub:
 
     async def send_request(self, packet: Packet, callback=None, *args, **kwargs):
         async def send():
-            self.writer.write(packet.data)
-            await self.writer.drain()
-            _LOGGER.debug(f"Sent packet data: {packet.data.hex()}")
-            if callback:
-                self.pending_commands[packet.seq] = callback
+            try:
+                self.writer.write(packet.encode())
+                await self.writer.drain()
+                _LOGGER.debug(f"Sent packet data: {packet.encode().hex()}")
+                if callback and packet.seq is not None:
+                    async with self.pending_commands_lock:
+                        self.pending_commands[packet.seq] = callback
+            except Exception as e:
+                _LOGGER.error(f"Failed to send packet: {e}")
+                if callback and packet.seq is not None:
+                    async with self.pending_commands_lock:
+                        if packet.seq in self.pending_commands:
+                            del self.pending_commands[packet.seq]
         self.hass.loop.create_task(send())
 
     def extract_seq_num(self, packet: Packet) -> Optional[int]:
@@ -449,13 +509,19 @@ class CyncHub:
             return None
         return struct.unpack(">H", packet.data[4:6])[0]
     
-    def execute_callback(self, seq_num):
+    async def execute_callback(self, seq_num: int):
         """Execute the callback associated with the given sequence number."""
-        if seq_num in self.pending_commands:
-            callback = self.pending_commands.pop(seq_num)
-            callback(seq_num)
-        else:
-            _LOGGER.warning(f"No pending command for sequence {seq_num}")
+        async with self.pending_commands_lock:
+            if seq_num in self.pending_commands:
+                callback = self.pending_commands.pop(seq_num)
+                if asyncio.iscoroutinefunction(callback):
+                    await callback(seq_num)
+                else:
+                    callback(seq_num)
+            else:
+                _LOGGER.warning(f"No pending command for sequence {seq_num}")
+
+
 
 
     # Packet creation methods
@@ -580,6 +646,7 @@ class CyncHub:
         )
     
         _LOGGER.debug(f"Set RGB Packet Data: {data.hex()}")
+        _LOGGER.debug(f"Controller ID: {controller_id}, Seq: {seq}, Device Index: {device_index}, RGB: ({r}, {g}, {b}), checksum: {checksum}")
         return Packet(PACKET_TYPE_REQUEST, False, data, seq)
 
     # Shutdown method to gracefully close the connection
@@ -685,103 +752,182 @@ class CyncRoom:
         self,
         brightness: Optional[int] = None,
         color_temp_kelvin: Optional[int] = None,
+        rgb_color: Optional[Tuple[int, int, int]] = None,
+        effect: Optional[str] = None,
+        transition: Optional[float] = None,
         **kwargs: Any
     ) -> None:
-        """Turn on the room lights."""
+        """Turn on the room lights with optional brightness, color temperature, RGB color, effect, and transition."""
+        _LOGGER.debug(
+            f"Room '{self.name}': Sending turn_on command with brightness={brightness}, "
+            f"color_temp_kelvin={color_temp_kelvin}, rgb_color={rgb_color}"
+        )
         attempts = 0
-        update_received = False
-        seq_ct = None
-        seq_brightness = None
-        seq_status = None
-        seq_rgb = None
+        max_attempts = int(self._command_retry_time / self._command_timeout)
+        success = False
 
-        while not update_received and attempts < int(self._command_retry_time / self._command_timeout):
-            # Unique sequence numbers for each command
-            seq_status = await self.hub.get_seq_num()
-            controller = self.controllers[attempts % len(self.controllers)] if self.controllers else self.default_controller
+        while not success and attempts < max_attempts:
+            try:
+                # Acquire a unique sequence number
+                seq_status = await self.hub.get_seq_num()
+                controller = self.controllers[attempts % len(self.controllers)] if self.controllers else self.default_controller
 
-            # Handle brightness
-            brightness_value = brightness if brightness is not None else self.brightness or 100
-
-            # Handle color temperature
-            color_temp = round(
-                (
-                    (color_temp_kelvin - self.min_color_temp_kelvin) /
-                    (self.max_color_temp_kelvin - self.min_color_temp_kelvin)
-                ) * 100
-            ) if color_temp_kelvin is not None else 50  # Default mid value
-
-            # Send Set Status (On) with unique seq_num and correct device_index
-            status_packet = self.hub.create_set_status_packet(
-                controller,
-                seq_status,
-                device_index=self.mesh_id,  # Use mesh_id
-                status=1
-            )
-            await self.hub.send_request(status_packet, self.command_received, device=self, action='turn_on_or_off', desired_state=True)
-
-            # Send Set Brightness with unique seq_num and correct device_index
-            if self.support_brightness:
-                seq_brightness = await self.hub.get_seq_num()
-                brightness_packet = self.hub.create_set_brightness_packet(
-                    controller,
-                    seq_brightness,
-                    device_index=self.mesh_id,  # Use mesh_id
-                    brightness=brightness_value
+                # Send Set Status (On)
+                status_packet = self.hub.create_set_status_packet(
+                    controller=controller,
+                    seq=seq_status,
+                    device_index=self.mesh_id,
+                    status=1  # 1 to turn on
                 )
-                await self.hub.send_request(brightness_packet, self.command_received, device=self, action='set_brightness', brightness=brightness_value)
 
-            # Send Set Color Temperature with unique seq_num and correct device_index
-            if self.support_color_temp:
-                seq_ct = await self.hub.get_seq_num()
-                color_temp_packet = self.hub.create_set_ct_packet(
-                    controller,
-                    seq_ct,
-                    device_index=self.mesh_id,  # Use mesh_id
-                    ct=color_temp
-                )
-                await self.hub.send_request(color_temp_packet, self.command_received, device=self, action='set_color_temp', color_temp_kelvin=color_temp_kelvin)
+                # Define acknowledgment callback
+                async def on_ack_status(seq):
+                    _LOGGER.debug(f"Room '{self.name}': Acknowledgment received for Set Status (On), seq={seq}")
 
-            # Wait for all acknowledgments
-            await asyncio.sleep(self._command_timeout)
+                # Send the Set Status packet
+                await self.hub.send_request(status_packet, callback=on_ack_status)
 
-            # Check if all commands have been acknowledged
-            if (
-                not self.hub.pending_commands.get((controller << 8) | seq_status) and
-                not self.hub.pending_commands.get((controller << 8) | seq_brightness) and
-                (not self.support_color_temp or not self.hub.pending_commands.get((controller << 8) | seq_ct))
-            ):
-                update_received = True
-            else:
+                # Initialize a list to track pending sequence numbers
+                pending_seqs = [seq_status]
+
+                # Handle Brightness
+                if self.support_brightness and brightness is not None:
+                    brightness_value = max(0, min(100, round((brightness / 255) * 100)))
+                    seq_brightness = await self.hub.get_seq_num()
+                    brightness_packet = self.hub.create_set_brightness_packet(
+                        controller=controller,
+                        seq=seq_brightness,
+                        device_index=self.mesh_id,
+                        brightness=brightness_value
+                    )
+
+                    async def on_ack_brightness(seq):
+                        _LOGGER.debug(f"Room '{self.name}': Acknowledgment received for Set Brightness, seq={seq}")
+
+                    await self.hub.send_request(brightness_packet, callback=on_ack_brightness)
+                    pending_seqs.append(seq_brightness)
+
+                # Handle Color Temperature
+                if self.support_color_temp and color_temp_kelvin is not None:
+                    # Scale color temperature to 0-100%
+                    color_temp_scaled = max(0, min(100, round(
+                        ((color_temp_kelvin - self.min_color_temp_kelvin) /
+                         (self.max_color_temp_kelvin - self.min_color_temp_kelvin)) * 100
+                    )))
+                    seq_ct = await self.hub.get_seq_num()
+                    ct_packet = self.hub.create_set_ct_packet(
+                        controller=controller,
+                        seq=seq_ct,
+                        device_index=self.mesh_id,
+                        ct=color_temp_scaled
+                    )
+
+                    async def on_ack_ct(seq):
+                        _LOGGER.debug(f"Room '{self.name}': Acknowledgment received for Set Color Temp, seq={seq}")
+
+                    await self.hub.send_request(ct_packet, callback=on_ack_ct)
+                    pending_seqs.append(seq_ct)
+
+                # Handle RGB Color
+                if self.support_rgb and rgb_color is not None:
+                    r, g, b = [max(0, min(255, val)) for val in rgb_color]
+                    seq_rgb = await self.hub.get_seq_num()
+                    rgb_packet = self.hub.create_set_rgb_packet(
+                        controller=controller,
+                        seq=seq_rgb,
+                        device_index=self.mesh_id,
+                        r=r,
+                        g=g,
+                        b=b
+                    )
+
+                    async def on_ack_rgb(seq):
+                        _LOGGER.debug(f"Room '{self.name}': Acknowledgment received for Set RGB, seq={seq}")
+
+                    await self.hub.send_request(rgb_packet, callback=on_ack_rgb)
+                    pending_seqs.append(seq_rgb)
+
+                # Optionally handle effects and transitions here
+                # ...
+
+                # Wait for acknowledgments within the timeout period
+                await asyncio.sleep(self._command_timeout)
+
+                # Check if all sequences have been acknowledged
+                async with self.hub.pending_commands_lock:
+                    pending = any(seq in self.hub.pending_commands for seq in pending_seqs)
+
+                if not pending:
+                    _LOGGER.info(f"Room '{self.name}': Successfully turned on the lights.")
+                    success = True
+                else:
+                    attempts += 1
+                    _LOGGER.warning(
+                        f"Room '{self.name}': Attempt {attempts} to turn on the lights failed. Retrying..."
+                    )
+
+            except Exception as e:
+                _LOGGER.error(f"Room '{self.name}': Exception during turn_on: {e}", exc_info=True)
                 attempts += 1
-                _LOGGER.debug(f"Attempt {attempts} to turn on the room lights.")
+                await asyncio.sleep(self._command_timeout)
+
+        if not success:
+            _LOGGER.error(f"Room '{self.name}': Failed to turn on the lights after {attempts} attempts.")
 
     async def turn_off(self, **kwargs: Any) -> None:
         """Turn off the room lights."""
+        _LOGGER.debug(f"Room '{self.name}': Sending turn_off command.")
         attempts = 0
-        update_received = False
-        while not update_received and attempts < int(self._command_retry_time / self._command_timeout):
-            seq = await self.hub.get_seq_num()
-            controller = self.controllers[attempts % len(self.controllers)] if self.controllers else self.default_controller
+        max_attempts = int(self._command_retry_time / self._command_timeout)
+        success = False
 
-            # Send Set Status (Off) with unique seq_num and correct device_index
-            status_packet = self.hub.create_set_status_packet(
-                controller,
-                seq,
-                device_index=self.mesh_id,  # Use mesh_id
-                status=0
-            )
-            await self.hub.send_request(status_packet, self.command_received, device=self, action='turn_on_or_off', desired_state=False)
+        while not success and attempts < max_attempts:
+            try:
+                # Acquire a unique sequence number
+                seq = await self.hub.get_seq_num()
+                controller = self.controllers[attempts % len(self.controllers)] if self.controllers else self.default_controller
 
-            # Wait for acknowledgment
-            await asyncio.sleep(self._command_timeout)
+                # Send Set Status (Off)
+                status_packet = self.hub.create_set_status_packet(
+                    controller=controller,
+                    seq=seq,
+                    device_index=self.mesh_id,
+                    status=0  # 0 to turn off
+                )
 
-            # Check if the command has been acknowledged
-            if not self.hub.pending_commands.get((controller << 8) | seq):
-                update_received = True
-            else:
+                # Define acknowledgment callback
+                async def on_ack_status_off(seq_num):
+                    _LOGGER.debug(f"Room '{self.name}': Acknowledgment received for Set Status (Off), seq={seq_num}")
+
+                # Send the Set Status packet
+                await self.hub.send_request(status_packet, callback=on_ack_status_off)
+
+                # Initialize a list to track pending sequence numbers
+                pending_seqs = [seq]
+
+                # Wait for acknowledgment within the timeout period
+                await asyncio.sleep(self._command_timeout)
+
+                # Check if the sequence has been acknowledged
+                async with self.hub.pending_commands_lock:
+                    pending = any(seq in self.hub.pending_commands for seq in pending_seqs)
+
+                if not pending:
+                    _LOGGER.info(f"Room '{self.name}': Successfully turned off the lights.")
+                    success = True
+                else:
+                    attempts += 1
+                    _LOGGER.warning(
+                        f"Room '{self.name}': Attempt {attempts} to turn off the lights failed. Retrying..."
+                    )
+
+            except Exception as e:
+                _LOGGER.error(f"Room '{self.name}': Exception during turn_off: {e}", exc_info=True)
                 attempts += 1
-                _LOGGER.debug(f"Attempt {attempts} to turn off the room lights.")
+                await asyncio.sleep(self._command_timeout)
+
+        if not success:
+            _LOGGER.error(f"Room '{self.name}': Failed to turn off the lights after {attempts} attempts.")
 
     def command_received(self, seq: int):
         """Handle command acknowledgment from the Cync server."""
@@ -950,115 +1096,217 @@ class CyncSwitch:
         **kwargs: Any
     ) -> None:
         """Turn on the light with optional brightness, color temperature, RGB color, effect, and transition."""
+        _LOGGER.debug(
+            f"Switch '{self.name}': Sending turn_on command with brightness={brightness}, "
+            f"color_temp_kelvin={color_temp_kelvin}, rgb_color={rgb_color}"
+        )
         attempts = 0
-        update_received = False
-    
-        while not update_received and attempts < int(self._command_retry_time / self._command_timeout):
-            seq_status = await self.hub.get_seq_num()
-            controller = int(self.controllers[attempts % len(self.controllers)] if self.controllers else self.default_controller)
-    
-            # Send Set Status (On)
-            status_packet = self.hub.create_set_status_packet(controller, seq_status, self.mesh_id, 1)
-            await self.hub.send_request(status_packet, self.command_received)
-    
-            # Handle brightness
-            if self.support_brightness and brightness is not None:
-                seq_brightness = await self.hub.get_seq_num()
-                brightness_value = max(0, min(100, round((brightness / 255) * 100)))
-                brightness_packet = self.hub.create_set_brightness_packet(controller, seq_brightness, self.mesh_id, brightness_value)
-                await self.hub.send_request(brightness_packet, self.command_received)
-    
-            # Handle color temperature
-            if self.support_color_temp and color_temp_kelvin is not None:
-                seq_ct = await self.hub.get_seq_num()
-                color_temp = max(0, min(100, round(
-                    ((color_temp_kelvin - self.min_color_temp_kelvin) /
-                    (self.max_color_temp_kelvin - self.min_color_temp_kelvin)) * 100)))
-                ct_packet = self.hub.create_set_ct_packet(controller, seq_ct, self.mesh_id, color_temp)
-                await self.hub.send_request(ct_packet, self.command_received)
-    
-            # Handle RGB color
-            if self.support_rgb and rgb_color is not None:
-                seq_rgb = await self.hub.get_seq_num()
-                r, g, b = [max(0, min(255, val)) for val in rgb_color]
-                rgb_packet = self.hub.create_set_rgb_packet(controller, seq_rgb, self.mesh_id, r, g, b)
-                await self.hub.send_request(rgb_packet, self.command_received)
-    
-            # Wait for acknowledgments
-            await asyncio.sleep(self._command_timeout)
-    
-            # Check if all commands have been acknowledged
-            pending_seqs = [seq_status]
-            if self.support_brightness and brightness is not None:
-                pending_seqs.append(seq_brightness)
-            if self.support_color_temp and color_temp_kelvin is not None:
-                pending_seqs.append(seq_ct)
-            if self.support_rgb and rgb_color is not None:
-                pending_seqs.append(seq_rgb)
-    
-            if all(seq not in self.hub.pending_commands for seq in pending_seqs):
-                update_received = True
-            else:
+        max_attempts = int(self._command_retry_time / self._command_timeout)
+        success = False
+
+        while not success and attempts < max_attempts:
+            try:
+                # Acquire a unique sequence number
+                seq_status = await self.hub.get_seq_num()
+                controller = self.controllers[attempts % len(self.controllers)] if self.controllers else self.default_controller
+
+                # Send Set Status (On)
+                status_packet = self.hub.create_set_status_packet(
+                    controller=controller,
+                    seq=seq_status,
+                    device_index=self.mesh_id,
+                    status=1  # 1 to turn on
+                )
+
+                # Define acknowledgment callback
+                async def on_ack_status(seq):
+                    _LOGGER.debug(f"Switch '{self.name}': Acknowledgment received for Set Status (On), seq={seq}")
+
+                # Send the Set Status packet
+                await self.hub.send_request(status_packet, callback=on_ack_status)
+
+                # Initialize a list to track pending sequence numbers
+                pending_seqs = [seq_status]
+
+                # Handle Brightness
+                if self.support_brightness and brightness is not None:
+                    brightness_value = max(0, min(100, round((brightness / 255) * 100)))
+                    seq_brightness = await self.hub.get_seq_num()
+                    brightness_packet = self.hub.create_set_brightness_packet(
+                        controller=controller,
+                        seq=seq_brightness,
+                        device_index=self.mesh_id,
+                        brightness=brightness_value
+                    )
+
+                    async def on_ack_brightness(seq):
+                        _LOGGER.debug(f"Switch '{self.name}': Acknowledgment received for Set Brightness, seq={seq}")
+
+                    await self.hub.send_request(brightness_packet, callback=on_ack_brightness)
+                    pending_seqs.append(seq_brightness)
+
+                # Handle Color Temperature
+                if self.support_color_temp and color_temp_kelvin is not None:
+                    # Scale color temperature to 0-100%
+                    color_temp_scaled = max(0, min(100, round(
+                        ((color_temp_kelvin - self.min_color_temp_kelvin) /
+                         (self.max_color_temp_kelvin - self.min_color_temp_kelvin)) * 100
+                    )))
+                    seq_ct = await self.hub.get_seq_num()
+                    ct_packet = self.hub.create_set_ct_packet(
+                        controller=controller,
+                        seq=seq_ct,
+                        device_index=self.mesh_id,
+                        ct=color_temp_scaled
+                    )
+
+                    async def on_ack_ct(seq):
+                        _LOGGER.debug(f"Switch '{self.name}': Acknowledgment received for Set Color Temp, seq={seq}")
+
+                    await self.hub.send_request(ct_packet, callback=on_ack_ct)
+                    pending_seqs.append(seq_ct)
+
+                # Handle RGB Color
+                if self.support_rgb and rgb_color is not None:
+                    r, g, b = [max(0, min(255, val)) for val in rgb_color]
+                    seq_rgb = await self.hub.get_seq_num()
+                    rgb_packet = self.hub.create_set_rgb_packet(
+                        controller=controller,
+                        seq=seq_rgb,
+                        device_index=self.mesh_id,
+                        r=r,
+                        g=g,
+                        b=b
+                    )
+
+                    async def on_ack_rgb(seq):
+                        _LOGGER.debug(f"Switch '{self.name}': Acknowledgment received for Set RGB, seq={seq}")
+
+                    await self.hub.send_request(rgb_packet, callback=on_ack_rgb)
+                    pending_seqs.append(seq_rgb)
+
+                # Optionally handle effects and transitions here
+                # ...
+
+                # Wait for acknowledgments within the timeout period
+                await asyncio.sleep(self._command_timeout)
+
+                # Check if all sequences have been acknowledged
+                async with self.hub.pending_commands_lock:
+                    pending = any(seq in self.hub.pending_commands for seq in pending_seqs)
+
+                if not pending:
+                    _LOGGER.info(f"Switch '{self.name}': Successfully turned on the light.")
+                    success = True
+                else:
+                    attempts += 1
+                    _LOGGER.warning(
+                        f"Switch '{self.name}': Attempt {attempts} to turn on the light failed. Retrying..."
+                    )
+
+            except Exception as e:
+                _LOGGER.error(f"Switch '{self.name}': Exception during turn_on: {e}", exc_info=True)
                 attempts += 1
-                _LOGGER.debug(f"Attempt {attempts} to turn on the switch.")
+                await asyncio.sleep(self._command_timeout)
+
+        if not success:
+            _LOGGER.error(f"Switch '{self.name}': Failed to turn on the light after {attempts} attempts.")
 
 
     async def turn_off(self, **kwargs: Any) -> None:
         """Turn off the light."""
+        _LOGGER.debug(f"Switch '{self.name}': Sending turn_off command.")
         attempts = 0
-        update_received = False
-    
-        while not update_received and attempts < int(self._command_retry_time / self._command_timeout):
-            seq = await self.hub.get_seq_num()
-            controller = int(self.controllers[attempts % len(self.controllers)] if self.controllers else self.default_controller)
-    
-            # Send Set Status (Off)
-            status_packet = self.hub.create_set_status_packet(controller, seq, self.mesh_id, 0)
-            await self.hub.send_request(status_packet, self.command_received)
-    
-            # Wait for acknowledgment
-            await asyncio.sleep(self._command_timeout)
-    
-            # Check if the command has been acknowledged
-            if seq not in self.hub.pending_commands:
-                update_received = True
-            else:
+        max_attempts = int(self._command_retry_time / self._command_timeout)
+        success = False
+
+        while not success and attempts < max_attempts:
+            try:
+                # Acquire a unique sequence number
+                seq = await self.hub.get_seq_num()
+                controller = self.controllers[attempts % len(self.controllers)] if self.controllers else self.default_controller
+
+                # Send Set Status (Off)
+                status_packet = self.hub.create_set_status_packet(
+                    controller=controller,
+                    seq=seq,
+                    device_index=self.mesh_id,
+                    status=0  # 0 to turn off
+                )
+
+                # Define acknowledgment callback
+                async def on_ack_status_off(seq_num):
+                    _LOGGER.debug(f"Switch '{self.name}': Acknowledgment received for Set Status (Off), seq={seq_num}")
+
+                # Send the Set Status packet
+                await self.hub.send_request(status_packet, callback=on_ack_status_off)
+
+                # Initialize a list to track pending sequence numbers
+                pending_seqs = [seq]
+
+                # Wait for acknowledgment within the timeout period
+                await asyncio.sleep(self._command_timeout)
+
+                # Check if the sequence has been acknowledged
+                async with self.hub.pending_commands_lock:
+                    pending = any(seq in self.hub.pending_commands for seq in pending_seqs)
+
+                if not pending:
+                    _LOGGER.info(f"Switch '{self.name}': Successfully turned off the light.")
+                    success = True
+                else:
+                    attempts += 1
+                    _LOGGER.warning(
+                        f"Switch '{self.name}': Attempt {attempts} to turn off the light failed. Retrying..."
+                    )
+
+            except Exception as e:
+                _LOGGER.error(f"Switch '{self.name}': Exception during turn_off: {e}", exc_info=True)
                 attempts += 1
-                _LOGGER.debug(f"Attempt {attempts} to turn off the switch.")
+                await asyncio.sleep(self._command_timeout)
+
+        if not success:
+            _LOGGER.error(f"Switch '{self.name}': Failed to turn off the light after {attempts} attempts.")
 
 
     def command_received(self, seq: int):
         """Handle command acknowledgment from the Cync server."""
         _LOGGER.debug(f"Command received for sequence {seq}")
 
-    def update_switch(self, state, brightness, color_temp=None, rgb=None):
+    def update_switch(self, state: bool, brightness: int, color_temp: Optional[int] = None, rgb: Optional[Dict[str, int]] = None):
         """Update the state of the switch as updates are received from the Cync server."""
+        updated = False
+    
         if color_temp is not None:
-            # Calculate color_temp_kelvin from color_temp percentage
-            self.color_temp_kelvin = round(
-                (self.max_color_temp_kelvin - self.min_color_temp_kelvin) *
-                (color_temp / 100) +
-                self.min_color_temp_kelvin
-            )
+            # Clamp color temperature within supported range
+            self.color_temp_kelvin = max(self.min_color_temp_kelvin, min(self.max_color_temp_kelvin, color_temp))
+            updated = True
     
         if rgb is not None:
-            self.rgb = rgb
+            # Clamp RGB values
+            self.rgb = {
+                'r': max(0, min(255, rgb.get('r', self.rgb['r']))),
+                'g': max(0, min(255, rgb.get('g', self.rgb['g']))),
+                'b': max(0, min(255, rgb.get('b', self.rgb['b'])))
+            }
+            updated = True
     
-        # Use the brightness provided by Cync (0-100) directly
         if brightness is not None:
-            self.brightness = brightness
+            # Clamp brightness within 0-100%
+            self.brightness = max(0, min(100, brightness))
+            updated = True
     
-        previous_state = (self.power_state, self.brightness, self.color_temp_kelvin, self.rgb)
-        new_state = (state, brightness, self.color_temp_kelvin, self.rgb)
-    
-        if previous_state != new_state:
+        # Update power state only if it has changed
+        if state != self.power_state:
             self.power_state = state
-            self.brightness = brightness if self.support_brightness and state else 100 if state else 0
-            self.color_temp_kelvin = self.color_temp_kelvin
-            self.rgb = rgb if rgb is not None else self.rgb
+            updated = True
+    
+        if updated:
+            _LOGGER.debug(f"Device '{self.name}' updated: State={self.power_state}, Brightness={self.brightness}, "
+                        f"Color Temp={self.color_temp_kelvin}, RGB={self.rgb}")
             self.publish_update()
             if self._update_parent_room:
-                self._update_parent_room()
+                asyncio.create_task(self._update_parent_room())
 
 
     def update_controllers(self):
