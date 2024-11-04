@@ -72,7 +72,6 @@ class InvalidCyncConfiguration(Exception):
 PACKET_TYPE_REQUEST = 0x73  # Status and brightness request
 PACKET_TYPE_PING = 0x0D  # 13 in decimal
 PACKET_TYPE_PIPE = 0x07  # 7 in decimal
-PACKET_TYPE_UNKNOWN = 0x03
 
 # Pipe types (from cync-lan)
 PACKET_PIPE_TYPE_SET_STATUS = 0xD0  # Set status (on/off)
@@ -160,8 +159,6 @@ class CyncHub:
         """Set up SSL context asynchronously."""
         if self.use_ssl:
             self.ssl_context = await self.hass.async_add_executor_job(ssl.create_default_context)
-            self.ssl_context.check_hostname = True
-            self.ssl_context.verify_mode = ssl.CERT_REQUIRED
         else:
             self.ssl_context = None
 
@@ -197,7 +194,7 @@ class CyncHub:
                 _LOGGER.debug(f"Sent login code: {self.login_code.hex()}")
     
                 # Await login response
-                login_response = await asyncio.wait_for(self.reader.read(1000), timeout=10)
+                login_response = await self.reader.read(1000)
                 _LOGGER.debug(f"Login response: {login_response.hex()}")
     
                 if not login_response:
@@ -213,10 +210,14 @@ class CyncHub:
                     raise Exception("Authentication failed with response data.")
     
                 # Create tasks for handling TCP messages and other maintenance tasks
-                read_tcp_messages_task = asyncio.create_task(self.read_tcp_messages(), name="Read TCP Messages")
-                await read_tcp_messages_task
+                read_tcp_messages = asyncio.create_task(self.read_tcp_messages(), name="Read TCP Messages")
+                # Additional tasks can be added here if needed
+    
+                # Wait for the read_tcp_messages task to complete
+                await read_tcp_messages
             except Exception as e:
-                _LOGGER.error(f"Exception in connect(): {type(e).__name__}: {e}", exc_info=True)
+                _LOGGER.error(f"Exception in connect(): {type(e).__name__}: {e}")
+                _LOGGER.debug("Traceback:", exc_info=True)
                 await asyncio.sleep(5)  # Retry connection after a delay if an error occurs
 
     async def read_tcp_messages(self) -> None:
@@ -226,11 +227,11 @@ class CyncHub:
                 data = await self.reader.read(1024)
                 if not data:
                     raise LostConnection("Connection closed by server")
-    
+
                 self.buffer += data
                 while len(self.buffer) >= 5:
                     header = self.buffer[:5]
-                    packet_type, is_response = (header[0] & 0xF0) >> 4, (header[0] & 0x08) != 0
+                    packet_type, is_response = (header[0] & 0XF0) >> 4, (header[0] & 0x08) != 0
                     packet_length = struct.unpack(">I", header[1:5])[0]
                     if len(self.buffer) < 5 + packet_length:
                         break
@@ -240,14 +241,14 @@ class CyncHub:
             except LostConnection:
                 break
             except Exception as e:
-                _LOGGER.error("Error while reading TCP messages:", exc_info=True)
+                _LOGGER.error(f"Error while reading TCP messages: {e}")
                 await asyncio.sleep(5)
                 
     async def handle_packet(self, packet_type: int, is_response: bool, packet_data: bytes) -> None:
-        _LOGGER.debug(f"Handling packet_type: {packet_type}, is_response: {is_response}, data: {hexdump(packet_data)}")
+        """Handle incoming packets based on their type."""
         if packet_type == PACKET_TYPE_PING:
             _LOGGER.debug("Received PING packet.")
-            # Handle PING
+            # Optionally, respond to the PING if necessary
         elif packet_type == PACKET_TYPE_PIPE:
             _LOGGER.debug("Received PIPE packet.")
             await self.process_pipe_packet(is_response, packet_data)
@@ -257,19 +258,9 @@ class CyncHub:
         elif packet_type == 0x08:
             _LOGGER.debug("Received packet type 8 (Iteration Request).")
             await self.process_type_8_packet(is_response, packet_data)
-        elif packet_type == PACKET_TYPE_UNKNOWN:
-            _LOGGER.debug("Received UNKNOWN packet type: 3")
-            # Example: Parse acknowledgment
-            if len(packet_data) >= 2:
-                ack_seq = struct.unpack(">H", packet_data[:2])[0]
-                _LOGGER.debug(f"Acknowledgment received for sequence {ack_seq}")
-                self.execute_callback(ack_seq)
-            else:
-                _LOGGER.error("Invalid UNKNOWN packet structure.")
         else:
             _LOGGER.warning(f"Unhandled packet type: {packet_type}")
             _LOGGER.debug(f"Packet data ({len(packet_data)} bytes): {hexdump(packet_data)}")
-
 
     async def process_type_4_packet(self, is_response: bool, data: bytes) -> None:
         """Process packet type 4 (Initial Client State)."""
@@ -443,61 +434,14 @@ class CyncHub:
         device.publish_update()
     
 
-    async def send_request(self, packet: Packet, callback: Optional[Callable[[str], None]] = None):
-        """
-        Asynchronously send a request packet to the server with an optional callback for acknowledgment.
-        """
-        if not self.logged_in or not self.writer:
-            _LOGGER.error("Cannot send request: Not authenticated or writer not available.")
-            return
-    
-        encoded_packet = packet.encode()
-        seq_num = self.extract_seq_num(packet)
-    
-        # Register callback if a valid sequence number is available
-        if seq_num and callback:
-            with self.pending_commands_lock:
-                self.pending_commands[seq_num] = callback
-    
-        retry_count = 0
-        while retry_count < 3:
-            if seq_num not in self.pending_commands:
-                # Exit if acknowledgment has been received
-                return
-    
-            try:
-                self.writer.write(encoded_packet)
-                await self.writer.drain()
-                _LOGGER.debug(f"Sent packet (Seq {seq_num}): {encoded_packet.hex()}")
-            except Exception as e:
-                _LOGGER.error(f"Error sending request (Seq {seq_num}): {e}", exc_info=True)
-                # Attempt to reconnect if necessary
-                await self.handle_disconnection()
-                break
-    
-            retry_count += 1
-            await asyncio.sleep(1)  # Adjusted delay for retries
-    
-        # Cleanup if retries are exhausted and acknowledgment has not been received
-        if seq_num in self.pending_commands:
-            _LOGGER.error(f"Failed to get acknowledgment for Seq {seq_num} after {retry_count} attempts.")
-            with self.pending_commands_lock:
-                self.pending_commands.pop(seq_num, None)
-    
-        # Cleanup if retries are exhausted and acknowledgment has not been received
-        if seq_num in self.pending_commands:
-            _LOGGER.error(f"Failed to get acknowledgment for Seq {seq_num} after {retry_count} attempts.")
-            with self.pending_commands_lock:
-                self.pending_commands.pop(seq_num, None)
-                
-    async def handle_disconnection(self):
-        """Handle unexpected disconnection from the server."""
-        if self.writer:
-            self.writer.close()
-            await self.writer.wait_closed()
-        self.logged_in = False
-        _LOGGER.info("Disconnected from the server. Attempting to reconnect...")
-        await self.connect()
+    async def send_request(self, packet: Packet, callback=None, *args, **kwargs):
+        async def send():
+            self.writer.write(packet.data)
+            await self.writer.drain()
+            _LOGGER.debug(f"Sent packet data: {packet.data.hex()}")
+            if callback:
+                self.pending_commands[packet.seq] = callback
+        self.hass.loop.create_task(send())
 
     def extract_seq_num(self, packet: Packet) -> Optional[int]:
         """Extract sequence number from a packet."""
@@ -505,22 +449,13 @@ class CyncHub:
             return None
         return struct.unpack(">H", packet.data[4:6])[0]
     
-    def execute_callback(self, seq_num: int):
-        """
-        Execute the callback associated with a sequence number.
-        """
-        callback = None
-        with self.pending_commands_lock:
-            callback = self.pending_commands.pop(seq_num, None)
-    
-        if callback:
-            try:
-                callback(str(seq_num))
-                _LOGGER.debug(f"Executed callback for sequence {seq_num}")
-            except Exception as e:
-                _LOGGER.error(f"Error executing callback for sequence {seq_num}: {e}")
+    def execute_callback(self, seq_num):
+        """Execute the callback associated with the given sequence number."""
+        if seq_num in self.pending_commands:
+            callback = self.pending_commands.pop(seq_num)
+            callback(seq_num)
         else:
-            _LOGGER.warning(f"No pending command found for sequence {seq_num}.")
+            _LOGGER.warning(f"No pending command for sequence {seq_num}")
 
 
     # Packet creation methods
@@ -1380,15 +1315,6 @@ class CyncUserData:
                 if resp.status == 200:
                     response = await resp.json()
                     return response
-                elif resp.status == 401:
-                    _LOGGER.error("Unauthorized access. Invalid token or session expired.")
-                    # Handle re-authentication if necessary
-                    return None
-                elif resp.status == 404:
-                    _LOGGER.error(
-                        f"Home with device ID {device_id} not found. The home may have been deleted or the ID is incorrect."
-                    )
-                    return None
                 else:
                     _LOGGER.error(
                         "Failed to get properties for home %s with status code: %s",
