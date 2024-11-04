@@ -143,6 +143,10 @@ class CyncHub:
         self.seq_lock = asyncio.Lock()
         self.pending_commands = {}
         self.pending_commands_lock = asyncio.Lock()
+        # Initialize the send queue
+        self.send_queue = asyncio.Queue()
+        # Start the packet sender task
+        self.send_task = self.hass.loop.create_task(self.packet_sender())
 
         self.buffer = b''  # Buffer for reading TCP data
 
@@ -247,11 +251,15 @@ class CyncHub:
                     self.buffer = self.buffer[5 + packet_length:]
                     await self.handle_packet(packet_type, is_response, packet_data)
             except LostConnection:
-                _LOGGER.warning("Lost connection to the server.")
+                _LOGGER.warning("Lost connection to the server. Attempting to reconnect...")
+                await self.shutdown()
+                await asyncio.sleep(5)  # Wait before reconnecting
+                await self.connect()  # Re-establish the connection
                 break
             except Exception as e:
                 _LOGGER.error(f"Error while reading TCP messages: {e}")
-                await asyncio.sleep(5)
+                _LOGGER.debug("Traceback:", exc_info=True)
+                await asyncio.sleep(5)  # Retry after delay
 
     async def handle_packet(self, packet_type: int, is_response: bool, packet_data: bytes) -> None:
         """Handle incoming packets based on their type."""
@@ -491,22 +499,32 @@ class CyncHub:
         # Notify about the state change
         device.publish_update()
 
-    async def send_request(self, packet: Packet, callback=None, *args, **kwargs):
-        async def send():
+    async def send_request(self, packet: Packet, callback=None):
+            """Enqueue the packet for sending."""
+            await self.send_queue.put((packet, callback))
+            _LOGGER.debug(f"Enqueued packet for sending: {packet}")
+    
+    async def packet_sender(self):
+        """Continuously send packets from the send_queue."""
+        while not self.shutting_down:
             try:
+                packet, callback = await self.send_queue.get()
                 self.writer.write(packet.encode())
                 await self.writer.drain()
-                _LOGGER.debug(f"Sent packet data: {packet.encode().hex()}")
+                _LOGGER.debug(f"Sent packet: {packet}")
+
                 if callback and packet.seq is not None:
                     async with self.pending_commands_lock:
                         self.pending_commands[packet.seq] = callback
+
+                # Optional: Add a small delay to rate limit packet sending
+                await asyncio.sleep(0.01)  # 10ms delay between packets
+
+                self.send_queue.task_done()
             except Exception as e:
-                _LOGGER.error(f"Failed to send packet: {e}")
-                if callback and packet.seq is not None:
-                    async with self.pending_commands_lock:
-                        if packet.seq in self.pending_commands:
-                            del self.pending_commands[packet.seq]
-        self.hass.loop.create_task(send())
+                _LOGGER.error(f"Failed to send packet from queue: {e}")
+                # Optionally, implement reconnection logic here
+                await asyncio.sleep(5)  # Wait before retrying
 
     def extract_seq_num(self, packet: Packet) -> Optional[int]:
         """Extract sequence number from a packet."""
@@ -637,10 +655,19 @@ class CyncHub:
         return Packet(PACKET_TYPE_REQUEST, False, payload, seq)
 
     # Shutdown method to gracefully close the connection
-    def shutdown(self):
+    async def shutdown(self):
+        """Gracefully shutdown the connection and tasks."""
         self.shutting_down = True
+        if self.send_task:
+            self.send_task.cancel()
+            try:
+                await self.send_task
+            except asyncio.CancelledError:
+                pass
         if self.writer:
-            self.hass.loop.create_task(self._close_writer())
+            self.writer.close()
+            await self.writer.wait_closed()
+        _LOGGER.info("CyncHub has been shut down.")
 
     async def _close_writer(self):
         self.writer.close()
@@ -770,7 +797,7 @@ class CyncRoom:
                 async def on_ack_status(seq):
                     _LOGGER.debug(f"Room '{self.name}': Acknowledgment received for Set Status (On), seq={seq}")
 
-                # Send the Set Status packet
+                # Enqueue the Set Status packet
                 await self.hub.send_request(status_packet, callback=on_ack_status)
 
                 # Initialize a list to track pending sequence numbers
@@ -1108,7 +1135,7 @@ class CyncSwitch:
                 async def on_ack_status(seq):
                     _LOGGER.debug(f"Switch '{self.name}': Acknowledgment received for Set Status (On), seq={seq}")
 
-                # Send the Set Status packet
+                # Enqueue the Set Status packet
                 await self.hub.send_request(status_packet, callback=on_ack_status)
 
                 # Initialize a list to track pending sequence numbers
