@@ -396,6 +396,7 @@ class CyncHub:
         else:
             _LOGGER.error("Invalid packet data for packet type 8.")
 
+    @staticmethod
     def parse_pipe_packet(data: bytes) -> Dict[str, Any]:
         """Parse PIPE packet data and return a dictionary of extracted values."""
         parsed = {}
@@ -456,7 +457,8 @@ class CyncHub:
         else:
             _LOGGER.debug(f"Processing PIPE request with data: {hexdump(data)}")
 
-            parsed_data = parse_pipe_packet(data)
+            # Call the static method using self
+            parsed_data = self.parse_pipe_packet(data)
             
             if not parsed_data.get('mesh_id'):
                 _LOGGER.error("Cannot parse PIPE packet without mesh_id.")
