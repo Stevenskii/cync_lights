@@ -94,20 +94,29 @@ class Packet:
         self.type = packet_type
         self.is_response = is_response
         self.data = data
-        self.seq = seq  # Add this line to store the sequence number
+        self.seq = seq  # Sequence number for tracking
 
     def encode(self) -> bytes:
         """Encode the packet into raw binary form."""
-        type_byte = (self.type << 4) & 0xF0  # Ensure type is in bits 7-4
-        type_byte |= 0x03  # Version or flags in bits 1-0 (adjust as needed)
+        type_byte = self.type
+
+        # Set the response flag if necessary
+        # Assuming bit 3 (0x08) is the response flag based on previous implementation
         if self.is_response:
-            type_byte |= 0x08  # Set response flag in bit 3
+            type_byte |= 0x08
+
+        # Calculate the length of the payload
         length = len(self.data)
+
+        # Construct the header: 1 byte type, 4 bytes length (big endian)
         header = struct.pack(">B I", type_byte, length)
+
+        # Return the complete packet
         return header + self.data
 
     def __str__(self):
-        return f"Packet(type={self.type}, response={self.is_response}, data={self.data.hex()})"
+        return f"Packet(type=0x{self.type:02X}, response={self.is_response}, data={self.data.hex()})"
+
 
 def hexdump(data):
     return ' '.join(f'{byte:02X}' for byte in data)
@@ -540,7 +549,7 @@ class CyncHub:
     #    _LOGGER.debug(f"Set Status Packet Data: {data.hex()}")
     #    return Packet(PACKET_TYPE_REQUEST, False, bytes(data))
     def create_set_status_packet(self, controller_id: int, seq: int, device_index: int, status: int) -> Packet:
-        # Ensure controller_id is within the valid range
+        # Validate inputs
         if not (0 <= controller_id <= 0xFFFFFFFF):
             raise ValueError(f"Controller ID {controller_id} out of range for unsigned int.")
         if not (0 <= seq <= 0xFFFF):
@@ -553,9 +562,9 @@ class CyncHub:
         # Calculate checksum
         checksum = (430 + mesh_id_bytes[0] + mesh_id_bytes[1] + status) % 256
     
-        data = (
-            bytes.fromhex('730000001f')  # Packet type and length
-            + controller_id.to_bytes(4, 'big')
+        # Construct payload only (exclude the manual header)
+        payload = (
+            controller_id.to_bytes(4, 'big')
             + seq.to_bytes(2, 'big')
             + bytes.fromhex('007e00000000f8d00d000000000000')
             + mesh_id_bytes
@@ -566,9 +575,9 @@ class CyncHub:
             + bytes.fromhex('7e')
         )
     
-        _LOGGER.debug(f"Set Status Packet Data: {data.hex()}")
+        _LOGGER.debug(f"Set Status Payload: {payload.hex()}")
         _LOGGER.debug(f"Controller ID: {controller_id}, Seq: {seq}, Device Index: {device_index}, Status: {status}, mesh_id_bytes: {mesh_id_bytes.hex()}, checksum: {checksum}")
-        return Packet(PACKET_TYPE_REQUEST, False, data, seq)
+        return Packet(PACKET_TYPE_REQUEST, False, payload, seq)
 
     def create_set_brightness_packet(self, controller_id: int, seq: int, device_index: int, brightness: int) -> Packet:
         # Ensure brightness is within 0 to 100
@@ -579,9 +588,9 @@ class CyncHub:
         # Calculate checksum
         checksum = (469 + mesh_id_bytes[0] + mesh_id_bytes[1] + brightness) % 256
     
-        data = (
-            bytes.fromhex('730000001e')  # Packet type and length
-            + controller_id.to_bytes(4, 'big')
+        # Construct payload only
+        payload = (
+            controller_id.to_bytes(4, 'big')
             + seq.to_bytes(2, 'big')
             + bytes.fromhex('007e00000000f8e10c000000000000')
             + mesh_id_bytes
@@ -591,8 +600,8 @@ class CyncHub:
             + bytes.fromhex('7e')
         )
     
-        _LOGGER.debug(f"Set Brightness Packet Data: {data.hex()}")
-        return Packet(PACKET_TYPE_REQUEST, False, data, seq)
+        _LOGGER.debug(f"Set Brightness Payload: {payload.hex()}")
+        return Packet(PACKET_TYPE_REQUEST, False, payload, seq)
 
     def create_set_ct_packet(self, controller_id: int, seq: int, device_index: int, ct: int) -> Packet:
         # Ensure ct (color temperature) is within 0 to 100
@@ -603,9 +612,9 @@ class CyncHub:
         # Calculate checksum
         checksum = (469 + mesh_id_bytes[0] + mesh_id_bytes[1] + ct) % 256
     
-        data = (
-            bytes.fromhex('730000001e')  # Packet type and length
-            + controller_id.to_bytes(4, 'big')
+        # Construct payload only
+        payload = (
+            controller_id.to_bytes(4, 'big')
             + seq.to_bytes(2, 'big')
             + bytes.fromhex('007e00000000f8e20c000000000000')
             + mesh_id_bytes
@@ -615,9 +624,8 @@ class CyncHub:
             + bytes.fromhex('7e')
         )
     
-        _LOGGER.debug(f"Set Color Temperature Packet Data: {data.hex()}")
-        return Packet(PACKET_TYPE_REQUEST, False, data, seq)
-
+        _LOGGER.debug(f"Set Color Temperature Payload: {payload.hex()}")
+        return Packet(PACKET_TYPE_REQUEST, False, payload, seq)
 
     def create_set_rgb_packet(self, controller_id: int, seq: int, device_index: int, r: int, g: int, b: int) -> Packet:
         # Ensure RGB values are within 0 to 255
@@ -630,9 +638,9 @@ class CyncHub:
         # Calculate checksum
         checksum = (496 + mesh_id_bytes[0] + mesh_id_bytes[1] + 1 + 100 + 254 + r + g + b) % 256
     
-        data = (
-            bytes.fromhex('7300000022')  # Packet type and length
-            + controller_id.to_bytes(4, 'big')
+        # Construct payload only
+        payload = (
+            controller_id.to_bytes(4, 'big')
             + seq.to_bytes(2, 'big')
             + bytes.fromhex('007e00000000f8f010000000000000')
             + mesh_id_bytes
@@ -645,9 +653,9 @@ class CyncHub:
             + bytes.fromhex('7e')
         )
     
-        _LOGGER.debug(f"Set RGB Packet Data: {data.hex()}")
+        _LOGGER.debug(f"Set RGB Payload: {payload.hex()}")
         _LOGGER.debug(f"Controller ID: {controller_id}, Seq: {seq}, Device Index: {device_index}, RGB: ({r}, {g}, {b}), checksum: {checksum}")
-        return Packet(PACKET_TYPE_REQUEST, False, data, seq)
+        return Packet(PACKET_TYPE_REQUEST, False, payload, seq)
 
     # Shutdown method to gracefully close the connection
     def shutdown(self):
