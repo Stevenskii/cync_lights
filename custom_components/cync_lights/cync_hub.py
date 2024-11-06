@@ -151,6 +151,7 @@ class CyncHub:
         self.buffer = b''  # Buffer for reading TCP data
 
         self.effect_mapping = self._parse_light_shows(data['cync_config'])  # Re-added light show parsing
+        
         self.hass.loop.create_task(self.connect())
 
     async def get_seq_num(self) -> int:
@@ -179,6 +180,11 @@ class CyncHub:
         Establish TCP connection and authenticate, with retries and task management.
         """
         _LOGGER.debug("CyncHub connect() method called.")
+        backoff = 1
+        max_backoff = 60  # Maximum backoff time in seconds
+        retry_attempts = 0
+        max_retries = 10  # Maximum number of retries before giving up
+
         while not self.shutting_down:
             try:
                 await self.setup_ssl_context()  # Setup SSL context asynchronously
@@ -216,21 +222,33 @@ class CyncHub:
                 # Process login response
                 if login_response.startswith(b'\x18\x00\x00\x00\x02\x00\x00'):
                     self.logged_in = True
+                    self.connected = True  # Update connection state
                     _LOGGER.debug("Successfully authenticated with the server.")
                 else:
                     _LOGGER.error(f"Authentication failed with response data: {login_response.hex()}")
                     raise Exception("Authentication failed with response data.")
 
-                # Create tasks for handling TCP messages and other maintenance tasks
+                # Reset backoff and retry attempts after successful connection
+                backoff = 1
+                retry_attempts = 0
+
+                # Create tasks for handling TCP messages and keep-alive
                 read_tcp_messages = asyncio.create_task(self.read_tcp_messages(), name="Read TCP Messages")
-                # Additional tasks can be added here if needed
+                # Additional maintenance tasks can be added here
 
                 # Wait for the read_tcp_messages task to complete
                 await read_tcp_messages
+
             except Exception as e:
                 _LOGGER.error(f"Exception in connect(): {type(e).__name__}: {e}")
                 _LOGGER.debug("Traceback:", exc_info=True)
-                await asyncio.sleep(5)  # Retry connection after a delay if an error occurs
+                retry_attempts += 1
+                if retry_attempts > max_retries:
+                    _LOGGER.error("Maximum reconnection attempts reached. Giving up.")
+                    break
+                _LOGGER.info(f"Reconnecting in {backoff} seconds... (Attempt {retry_attempts}/{max_retries})")
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, max_backoff)  # Exponential backoff
 
     async def read_tcp_messages(self) -> None:
         """Continuously read and process TCP messages from the server."""
@@ -505,10 +523,16 @@ class CyncHub:
             _LOGGER.debug(f"Enqueued packet for sending: {packet}")
     
     async def packet_sender(self):
-        """Continuously send packets from the send_queue."""
+        """Continuously send packets from the send_queue sequentially."""
         while not self.shutting_down:
             try:
                 packet, callback = await self.send_queue.get()
+                if not self.writer:
+                    _LOGGER.warning("Writer is not available. Re-enqueueing packet and waiting.")
+                    await self.send_queue.put((packet, callback))
+                    await asyncio.sleep(1)
+                    continue
+
                 self.writer.write(packet.encode())
                 await self.writer.drain()
                 _LOGGER.debug(f"Sent packet: {packet}")
@@ -517,13 +541,22 @@ class CyncHub:
                     async with self.pending_commands_lock:
                         self.pending_commands[packet.seq] = callback
 
-                # Optional: Add a small delay to rate limit packet sending
-                await asyncio.sleep(0.01)  # 10ms delay between packets
+                # Add a delay to prevent packet flooding
+                await asyncio.sleep(0.1)  # 100ms delay between packets
 
                 self.send_queue.task_done()
+            except (ConnectionResetError, BrokenPipeError):
+                _LOGGER.error("Connection reset by peer. Initiating reconnection.")
+                self.connected = False
+                await self.shutdown()
+                await asyncio.sleep(5)  # Wait before reconnecting
+                await self.connect()
+            except asyncio.CancelledError:
+                _LOGGER.info("Packet sender task cancelled.")
+                break
             except Exception as e:
                 _LOGGER.error(f"Failed to send packet from queue: {e}")
-                # Optionally, implement reconnection logic here
+                _LOGGER.debug("Traceback:", exc_info=True)
                 await asyncio.sleep(5)  # Wait before retrying
 
     def extract_seq_num(self, packet: Packet) -> Optional[int]:
