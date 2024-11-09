@@ -431,21 +431,21 @@ class CyncHub:
         # Controller ID
         if len(data) >= 4:
             parsed['controller_id'] = int.from_bytes(data[0:4], 'big')
-            _LOGGER.debug(f"Parsed Controller ID: {controller_id}")
+            _LOGGER.debug(f"Parsed Controller ID: {parsed.controller_id}")
         else:
             parsed['controller_id'] = None
         
         # Mesh ID
         if len(data) >= 21:
             parsed['mesh_id'] = int.from_bytes(data[19:21], 'little')
-            _LOGGER.debug(f"Parsed Mesh ID: {mesh_id}")
+            _LOGGER.debug(f"Parsed Mesh ID: {parsed.mesh_id}")
         else:
             parsed['mesh_id'] = None
         
         # Power Status
         if len(data) > 8:
             parsed['power_status'] = bool(data[8] & 0x01)
-            _LOGGER.debug(f"Parsed Power Status: {power_status}")
+            _LOGGER.debug(f"Parsed Power Status: {parsed.power_status}")
         else:
             parsed['power_status'] = False
         
@@ -454,7 +454,7 @@ class CyncHub:
             brightness_raw = data[9]
             parsed['brightness'] = max(0, min(100, round((brightness_raw / 255) * 100)))
             _LOGGER.debug(f"Raw Brightness: {brightness_raw}")
-            _LOGGER.debug(f"Parsed Brightness: {brightness}")
+            _LOGGER.debug(f"Parsed Brightness: {parsed.brightness}")
         else:
             parsed['brightness'] = 0
         
@@ -463,7 +463,7 @@ class CyncHub:
             color_temp_raw = data[10]
             parsed['color_temp_kelvin'] = max(2000, min(7000, 2000 + (color_temp_raw * 50)))  # Placeholder conversion
             _LOGGER.debug(f"Raw Color Temp: {color_temp_raw}")
-            _LOGGER.debug(f"Parsed Color Temp: {color_temp_kelvin}")
+            _LOGGER.debug(f"Parsed Color Temp: {parsed.color_temp_kelvin}")
         else:
             parsed['color_temp_kelvin'] = None
         
