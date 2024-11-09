@@ -454,7 +454,7 @@ class CyncHub:
         # Controller ID
         if len(data) >= 4:
             parsed['controller_id'] = int.from_bytes(data[0:4], 'big')
-            _LOGGER.debug(f"Parsed Controller ID: {parsed['controller_id'}")
+            _LOGGER.debug(f"Parsed Controller ID: {parsed['controller_id']}")
         else:
             parsed['controller_id'] = None
         
