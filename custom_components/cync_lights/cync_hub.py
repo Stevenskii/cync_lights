@@ -151,6 +151,14 @@ class CyncHub:
 
         self.hass.loop.create_task(self.connect())
 
+    def _parse_light_shows(self, cync_config) -> Dict[str, Any]:
+        """Parse lightShows data from cync_config and create a mapping."""
+        effect_mapping = {}
+        for home_info in cync_config.get('homes', {}).values():
+            for show in home_info.get('lightShows', []):
+                effect_mapping[show['name']] = show
+        return effect_mapping
+
     async def get_seq_num(self) -> int:
         """Thread-safe method to get the next sequence number."""
         async with self.seq_lock:
