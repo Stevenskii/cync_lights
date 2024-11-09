@@ -26,13 +26,11 @@ async def async_setup_entry(
 
     # Retrieve configuration data from entry
     data = entry.data
-    options = entry.options
     
     # Initialize the CyncHub instance
     hub = CyncHub(
         hass=hass,
-        data=data,
-        options=options
+        data=data
     )
 
     # Setup SSL asynchronously (if needed)
