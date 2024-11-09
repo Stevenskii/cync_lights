@@ -240,7 +240,7 @@ class CyncHub:
                 read_write_tasks = [read_tcp_messages, maintain_connection, update_state, update_connected_devices]
                 try:
                     done, pending = await asyncio.wait(read_write_tasks,return_when=asyncio.FIRST_EXCEPTION)
-                    for task in done
+                    for task in done:
                         name = task.get_name()
                         exception = task.exception()
                         try:
