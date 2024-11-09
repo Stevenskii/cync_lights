@@ -138,13 +138,14 @@ class CyncHub:
         self.cync_rooms = {room_id: CyncRoom(room_id, room_info, self) for room_id, room_info in data['cync_config']['rooms'].items()}
         self.cync_switches = {device_id: CyncSwitch(device_id, switch_info, self.cync_rooms.get(switch_info['room']), self)
                               for device_id, switch_info in data['cync_config']['devices'].items() if switch_info.get("ONOFF", False)}
-
         self.seq_num = 0
         self.seq_lock = asyncio.Lock()
         self.pending_commands = {}
         self.pending_commands_lock = asyncio.Lock()
-        # Initialize the send queue
+        # Initialize the send and receive queue
         self.send_queue = asyncio.Queue()
+        self.seq_to_mesh_id: Dict[int, int] = {}
+        self.seq_to_mesh_id_lock = asyncio.Lock()
         # Start the packet sender task
         self.send_task = self.hass.loop.create_task(self.packet_sender())
 
@@ -234,7 +235,7 @@ class CyncHub:
 
                 # Create tasks for handling TCP messages and keep-alive
                 read_tcp_messages = asyncio.create_task(self.read_tcp_messages(), name="Read TCP Messages")
-                # Additional maintenance tasks can be added here
+                # TODO - Additional maintenance tasks for keep-alive
 
                 # Wait for the read_tcp_messages task to complete
                 await read_tcp_messages
@@ -430,18 +431,21 @@ class CyncHub:
         # Controller ID
         if len(data) >= 4:
             parsed['controller_id'] = int.from_bytes(data[0:4], 'big')
+            _LOGGER.debug(f"Parsed Controller ID: {controller_id}")
         else:
             parsed['controller_id'] = None
         
         # Mesh ID
         if len(data) >= 21:
             parsed['mesh_id'] = int.from_bytes(data[19:21], 'little')
+            _LOGGER.debug(f"Parsed Mesh ID: {mesh_id}")
         else:
             parsed['mesh_id'] = None
         
         # Power Status
         if len(data) > 8:
             parsed['power_status'] = bool(data[8] & 0x01)
+            _LOGGER.debug(f"Parsed Power Status: {power_status}")
         else:
             parsed['power_status'] = False
         
@@ -449,6 +453,8 @@ class CyncHub:
         if len(data) > 9:
             brightness_raw = data[9]
             parsed['brightness'] = max(0, min(100, round((brightness_raw / 255) * 100)))
+            _LOGGER.debug(f"Raw Brightness: {brightness_raw}")
+            _LOGGER.debug(f"Parsed Brightness: {brightness}")
         else:
             parsed['brightness'] = 0
         
@@ -456,6 +462,8 @@ class CyncHub:
         if len(data) > 10:
             color_temp_raw = data[10]
             parsed['color_temp_kelvin'] = max(2000, min(7000, 2000 + (color_temp_raw * 50)))  # Placeholder conversion
+            _LOGGER.debug(f"Raw Color Temp: {color_temp_raw}")
+            _LOGGER.debug(f"Parsed Color Temp: {color_temp_kelvin}")
         else:
             parsed['color_temp_kelvin'] = None
         
@@ -466,6 +474,7 @@ class CyncHub:
                 'g': data[12],
                 'b': data[13]
             }
+            _LOGGER.debug(f"Parsed RGB: {rgb} -- R:{r}, G:{g}, B:{b}")
         else:
             parsed['rgb'] = {'r': 0, 'g': 0, 'b': 0}
         
@@ -478,29 +487,59 @@ class CyncHub:
                 seq_num = struct.unpack(">H", data[4:6])[0]
                 _LOGGER.debug(f"Acknowledgment received for sequence {seq_num}")
                 await self.execute_callback(seq_num)
+                # Remove the mapping as it's acknowledged
+                async with self.seq_to_mesh_id_lock:
+                    if seq_num in self.seq_to_mesh_id:
+                        del self.seq_to_mesh_id[seq_num]
             else:
-                _LOGGER.error("Invalid acknowledgment packet")
+                _LOGGER.error(f"Invalid acknowledgment packet: {hexdump(data)}")
         else:
             _LOGGER.debug(f"Processing PIPE request with data: {hexdump(data)}")
-
-            # Call the static method using self
-            parsed_data = self.parse_pipe_packet(data)
-            
-            if not parsed_data.get('mesh_id'):
-                _LOGGER.error("Cannot parse PIPE packet without mesh_id.")
-                return
-            
-            device = next((dev for dev in self.cync_switches.values() if dev.mesh_id == parsed_data['mesh_id']), None)
-            if not device:
-                _LOGGER.warning(f"No device found with mesh_id {parsed_data['mesh_id']}")
-                return
-            
-            device.update_switch(
-                state=parsed_data.get('power_status', False),
-                brightness=parsed_data.get('brightness', 0),
+            # Extract the sequence number from the packet
+            if len(data) >= 6:
+                seq_num = struct.unpack(">H", data[4:6])[0]
+                _LOGGER.debug(f"Received PIPE packet with sequence {seq_num}")
+                
+                # Retrieve mesh_id using seq_num
+                async with self.seq_to_mesh_id_lock:
+                    mesh_id = self.seq_to_mesh_id.get(seq_num)
+                
+                if mesh_id is None:
+                    _LOGGER.error(f"No mesh_id found for sequence {seq_num}. Cannot parse PIPE packet.")
+                    return
+                
+                # Find the device using mesh_id
+                device = next((dev for dev in self.cync_switches.values() if dev.mesh_id == mesh_id), None)
+                if not device:
+                    _LOGGER.warning(f"No device found with mesh_id {mesh_id}")
+                    return
+            if len(data) >= 11:
+                parsed_data = self.parse_pipe_packet(data)
+                device.update_switch(
+                state = parsed_data.get('power_status'),
+                brightness = parsed_data.get('brightness'),
                 color_temp=parsed_data.get('color_temp_kelvin'),
-                rgb=parsed_data.get('rgb', {'r': 0, 'g': 0, 'b': 0})
-            )
+                rgb=parsed_data.get('rgb')
+                _LOGGER.debug(f"Parsed packet - State: {state}, Brightness: {brightness}, Color Temp: {color_temp_kelvin}, RGB: {rgb}")
+                )
+            # Call the static method using self
+            #parsed_data = self.parse_pipe_packet(data)
+            #
+            #if not parsed_data.get('mesh_id'):
+            #    _LOGGER.error("Cannot parse PIPE packet without mesh_id.")
+            #    return
+            #
+            #device = next((dev for dev in self.cync_switches.values() if dev.mesh_id == parsed_data['mesh_id']), None)
+            #if not device:
+            #    _LOGGER.warning(f"No device found with mesh_id {parsed_data['mesh_id']}")
+            #    return
+            
+            #device.update_switch(
+            #    state=parsed_data.get('power_status', False),
+            #    brightness=parsed_data.get('brightness', 0),
+            #    color_temp=parsed_data.get('color_temp_kelvin'),
+            #    rgb=parsed_data.get('rgb', {'r': 0, 'g': 0, 'b': 0})
+            #)
 
     def update_device_state(self, device_id: int, **kwargs):
         """Update the state of a device."""
@@ -517,8 +556,11 @@ class CyncHub:
         # Notify about the state change
         device.publish_update()
 
-    async def send_request(self, packet: Packet, callback=None):
-            """Enqueue the packet for sending."""
+    async def send_request(self, packet: Packet, callback=None, mesh_id: Optional[int] = None):
+            """Enqueue the packet for sending and map seq_num to mesh_id if provided."""
+            if mesh_id is not None:
+                async with self.seq_to_mesh_id_lock:
+                    self.seq_to_mesh_id[packet.seq] = mesh_id
             await self.send_queue.put((packet, callback))
             _LOGGER.debug(f"Enqueued packet for sending: {packet}")
     
@@ -576,6 +618,11 @@ class CyncHub:
                     callback(seq_num)
             else:
                 _LOGGER.warning(f"No pending command for sequence {seq_num}")
+        
+        # Remove the mesh_id mapping after execution
+        async with self.seq_to_mesh_id_lock:
+            if seq_num in self.seq_to_mesh_id:
+                del self.seq_to_mesh_id[seq_num]
 
     # Packet creation methods
     def create_set_status_packet(self, controller_id: int, seq: int, device_index: int, status: int) -> Packet:
@@ -590,7 +637,7 @@ class CyncHub:
         mesh_id_bytes = device_index.to_bytes(2, 'little')
 
         # Calculate checksum
-        checksum = (430 + mesh_id_bytes[0] + mesh_id_bytes[1] + status) % 256
+        checksum = (429 + mesh_id_bytes[0] + mesh_id_bytes[1] + status) % 256
 
         # Construct payload only (exclude the manual header)
         payload = (
@@ -606,7 +653,6 @@ class CyncHub:
         )
 
         _LOGGER.debug(f"Set Status Payload: {payload.hex()}")
-        _LOGGER.debug(f"Controller ID: {controller_id}, Seq: {seq}, Device Index: {device_index}, Status: {status}, mesh_id_bytes: {mesh_id_bytes.hex()}, checksum: {checksum}")
         return Packet(PACKET_TYPE_REQUEST, False, payload, seq)
 
     def create_set_brightness_packet(self, controller_id: int, seq: int, device_index: int, brightness: int) -> Packet:
@@ -676,7 +722,7 @@ class CyncHub:
             + mesh_id_bytes
             + bytes.fromhex('f00000')
             + bytes([1])  # Status (1 for on)
-            + bytes([100])  # Brightness (100%)
+            + bytes([self.parsed.brightness])  # Brightness (100%)
             + bytes([254])  # Color temperature (254 indicates RGB mode)
             + bytes([r, g, b])
             + checksum.to_bytes(1, 'big')
@@ -684,7 +730,6 @@ class CyncHub:
         )
 
         _LOGGER.debug(f"Set RGB Payload: {payload.hex()}")
-        _LOGGER.debug(f"Controller ID: {controller_id}, Seq: {seq}, Device Index: {device_index}, RGB: ({r}, {g}, {b}), checksum: {checksum}")
         return Packet(PACKET_TYPE_REQUEST, False, payload, seq)
 
     # Shutdown method to gracefully close the connection
@@ -700,11 +745,6 @@ class CyncHub:
         if self.writer:
             self.writer.close()
             await self.writer.wait_closed()
-        _LOGGER.info("CyncHub has been shut down.")
-
-    async def _close_writer(self):
-        self.writer.close()
-        await self.writer.wait_closed()
         _LOGGER.info("CyncHub has been shut down.")
 
 class CyncRoom:
@@ -1107,8 +1147,8 @@ class CyncSwitch:
         self.plug = switch_info.get('PLUG', False)
         self.fan = switch_info.get('FAN', False)
         self.elements = switch_info.get('MULTIELEMENT', 1)
-        self._command_timeout = 0.5
-        self._command_retry_time = 5
+        self._command_timeout = 1
+        self._command_retry_time = 10
 
     def register(self, update_callback) -> None:
         """Register callback, called when switch changes state."""
@@ -1169,7 +1209,7 @@ class CyncSwitch:
                     _LOGGER.debug(f"Switch '{self.name}': Acknowledgment received for Set Status (On), seq={seq}")
 
                 # Enqueue the Set Status packet
-                await self.hub.send_request(status_packet, callback=on_ack_status)
+                await self.hub.send_request(status_packet, callback=on_ack_status, mesh_id=self.mesh_id)
 
                 # Initialize a list to track pending sequence numbers
                 pending_seqs = [seq_status]
@@ -1188,7 +1228,7 @@ class CyncSwitch:
                     async def on_ack_brightness(seq):
                         _LOGGER.debug(f"Switch '{self.name}': Acknowledgment received for Set Brightness, seq={seq}")
 
-                    await self.hub.send_request(brightness_packet, callback=on_ack_brightness)
+                    await self.hub.send_request(brightness_packet, callback=on_ack_brightness, mesh_id=self.mesh_id)
                     pending_seqs.append(seq_brightness)
 
                 # Handle Color Temperature
@@ -1209,7 +1249,7 @@ class CyncSwitch:
                     async def on_ack_ct(seq):
                         _LOGGER.debug(f"Switch '{self.name}': Acknowledgment received for Set Color Temp, seq={seq}")
 
-                    await self.hub.send_request(ct_packet, callback=on_ack_ct)
+                    await self.hub.send_request(ct_packet, callback=on_ack_ct, mesh_id=self.mesh_id)
                     pending_seqs.append(seq_ct)
 
                 # Handle RGB Color
@@ -1228,7 +1268,7 @@ class CyncSwitch:
                     async def on_ack_rgb(seq):
                         _LOGGER.debug(f"Switch '{self.name}': Acknowledgment received for Set RGB, seq={seq}")
 
-                    await self.hub.send_request(rgb_packet, callback=on_ack_rgb)
+                    await self.hub.send_request(rgb_packet, callback=on_ack_rgb, mesh_id=self.mesh_id)
                     pending_seqs.append(seq_rgb)
 
                 # Optionally handle effects and transitions here
@@ -1263,20 +1303,20 @@ class CyncSwitch:
         _LOGGER.debug(f"Switch '{self.name}': Sending turn_off command.")
         attempts = 0
         max_attempts = int(self._command_retry_time / self._command_timeout)
-        success = False
+        updated = False
 
-        while not success and attempts < max_attempts:
+        while not updated and attempts < max_attempts:
             try:
                 # Acquire a unique sequence number
-                seq = await self.hub.get_seq_num()
+                seq_status = await self.hub.get_seq_num()
                 controller = self.controllers[attempts % len(self.controllers)] if self.controllers else self.default_controller
 
-                # Send Set Status (Off)
+                # Send Set Status (On)
                 status_packet = self.hub.create_set_status_packet(
                     controller_id=controller,
-                    seq=seq,
+                    seq=seq_status,
                     device_index=self.mesh_id,
-                    status=0  # 0 to turn off
+                    status=0  # 0 to turn on
                 )
 
                 # Define acknowledgment callback
@@ -1284,7 +1324,7 @@ class CyncSwitch:
                     _LOGGER.debug(f"Switch '{self.name}': Acknowledgment received for Set Status (Off), seq={seq_num}")
 
                 # Send the Set Status packet
-                await self.hub.send_request(status_packet, callback=on_ack_status_off)
+                await self.hub.send_request(status_packet, callback=on_ack_status_off, mesh_id=self.mesh_id)
 
                 # Initialize a list to track pending sequence numbers
                 pending_seqs = [seq]
@@ -1298,7 +1338,7 @@ class CyncSwitch:
 
                 if not pending:
                     _LOGGER.info(f"Switch '{self.name}': Successfully turned off the light.")
-                    success = True
+                    updated = True
                 else:
                     attempts += 1
                     _LOGGER.warning(
