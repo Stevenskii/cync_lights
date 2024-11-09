@@ -2,21 +2,20 @@ import logging
 import asyncio
 import struct
 import aiohttp
-import math
 import ssl
-import traceback
-import time
-from typing import Any, Callable, Dict, List, Optional, Tuple
 import json
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 _LOGGER = logging.getLogger(__name__)
 
+# Define API endpoints and constants
 API_AUTH = "https://api.gelighting.com/v2/user_auth"
 API_REQUEST_CODE = "https://api.gelighting.com/v2/two_factor/email/verifycode"
 API_2FACTOR_AUTH = "https://api.gelighting.com/v2/user_auth/two_factor"
 API_DEVICES = "https://api.gelighting.com/v2/user/{user}/subscribe/devices"
 API_DEVICE_INFO = "https://api.gelighting.com/v2/product/{product_id}/device/{device_id}/property"
 
+# Device capabilities
 Capabilities = {
     "ONOFF": [1, 5, 6, 7, 8, 9, 10, 11, 13, 14, 15, 17, 18, 19, 20, 21, 22, 23, 24,
               25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 48,
@@ -79,11 +78,6 @@ PACKET_PIPE_TYPE_SET_LUM = 0xD2  # Set brightness
 PACKET_PIPE_TYPE_SET_CT = 0xE2  # Set color temperature
 PACKET_PIPE_TYPE_SET_RGB = 0xD4  # Set RGB color
 
-# Pipe subtypes for acknowledgments (from cync-lan)
-PACKET_PIPE_SUBTYPE_ACK_SET_STATUS = 17  # Acknowledgment for setting status
-PACKET_PIPE_SUBTYPE_ACK_SET_LUM = 18  # Acknowledgment for setting brightness
-PACKET_PIPE_SUBTYPE_ACK_SET_CT = 37  # Acknowledgment for setting color temperature
-
 # Constants
 DEFAULT_TIMEOUT = 10  # seconds
 DEFAULT_HOST = "cm.gelighting.com"
@@ -101,7 +95,6 @@ class Packet:
         type_byte = self.type
 
         # Set the response flag if necessary
-        # Assuming bit 3 (0x08) is the response flag based on previous implementation
         if self.is_response:
             type_byte |= 0x08
 
@@ -121,13 +114,13 @@ def hexdump(data):
     return ' '.join(f'{byte:02X}' for byte in data)
 
 class CyncHub:
-    def __init__(self, hass: Any, data: Dict[str, Any], options: Dict[str, Any]):
+    def __init__(self, hass: Any, data: Dict[str, Any]):
         """Initialize the CyncHub."""
         self.hass = hass
         self.host = data.get("host", DEFAULT_HOST)
         self.port = data.get("port", DEFAULT_PORT)
         self.login_code = bytearray(data['cync_credentials'])
-        self.use_ssl = options.get("use_ssl", True)
+        self.use_ssl = True  # Assuming SSL is used
         self.ssl_context = None
         self.reader, self.writer, self.logged_in, self.shutting_down = None, None, False, False
 
@@ -135,9 +128,12 @@ class CyncHub:
         self.home_controllers = data['cync_config']['home_controllers']
         self.switchID_to_homeID = data['cync_config']['switchID_to_homeID']
         self.connected_devices = {home_id: [] for home_id in self.home_controllers.keys()}
-        self.cync_rooms = {room_id: CyncRoom(room_id, room_info, self) for room_id, room_info in data['cync_config']['rooms'].items()}
-        self.cync_switches = {device_id: CyncSwitch(device_id, switch_info, self.cync_rooms.get(switch_info['room']), self)
-                              for device_id, switch_info in data['cync_config']['devices'].items() if switch_info.get("ONOFF", False)}
+        self.connected_devices_updated = False
+        self.cync_switches = {
+            device_id: CyncSwitch(device_id, switch_info, self)
+            for device_id, switch_info in data['cync_config']['devices'].items()
+            if switch_info.get("ONOFF", False)
+        }
         self.seq_num = 0
         self.seq_lock = asyncio.Lock()
         self.pending_commands = {}
@@ -151,8 +147,6 @@ class CyncHub:
 
         self.buffer = b''  # Buffer for reading TCP data
 
-        self.effect_mapping = self._parse_light_shows(data['cync_config'])  # Re-added light show parsing
-        
         self.hass.loop.create_task(self.connect())
 
     async def get_seq_num(self) -> int:
@@ -160,14 +154,6 @@ class CyncHub:
         async with self.seq_lock:
             self.seq_num = (self.seq_num + 1) % 65536
             return self.seq_num
-
-    def _parse_light_shows(self, cync_config) -> Dict[str, Any]:
-        """Parse lightShows data from cync_config and create a mapping."""
-        effect_mapping = {}
-        for home_info in cync_config.get('homes', {}).values():
-            for show in home_info.get('lightShows', []):
-                effect_mapping[show['name']] = show
-        return effect_mapping
 
     async def setup_ssl_context(self) -> None:
         """Set up SSL context asynchronously."""
@@ -234,12 +220,12 @@ class CyncHub:
 
                 # Create tasks for handling TCP messages and keep-alive
                 read_tcp_messages = asyncio.create_task(self.read_tcp_messages(), name="Read TCP Messages")
-                maintain_connection = asyncio.create_task(self._maintain_connection(), name = "Maintain Connection")
-                update_state = asyncio.create_task(self._update_state(), name = "Update State")
-                update_connected_devices = asyncio.create_task(self._update_connected_devices(), name = "Update Connected Devices")
+                maintain_connection = asyncio.create_task(self._maintain_connection(), name="Maintain Connection")
+                update_state = asyncio.create_task(self._update_state(), name="Update State")
+                update_connected_devices = asyncio.create_task(self._update_connected_devices(), name="Update Connected Devices")
                 read_write_tasks = [read_tcp_messages, maintain_connection, update_state, update_connected_devices]
                 try:
-                    done, pending = await asyncio.wait(read_write_tasks,return_when=asyncio.FIRST_EXCEPTION)
+                    done, pending = await asyncio.wait(read_write_tasks, return_when=asyncio.FIRST_EXCEPTION)
                     for task in done:
                         name = task.get_name()
                         exception = task.exception()
@@ -440,38 +426,38 @@ class CyncHub:
             _LOGGER.error("Invalid packet data for packet type 8.")
 
     async def _maintain_connection(self):
-            while not self.shutting_down:
-                await asyncio.sleep(180)
-                self.writer.write(bytes.fromhex('d300000000'))
-                await self.writer.drain()
-            raise ShuttingDown
+        while not self.shutting_down:
+            await asyncio.sleep(180)
+            self.writer.write(bytes.fromhex('d300000000'))
+            await self.writer.drain()
+        raise ShuttingDown
 
     @staticmethod
     def parse_pipe_packet(data: bytes) -> Dict[str, Any]:
         """Parse PIPE packet data and return a dictionary of extracted values."""
         parsed = {}
-        
+
         # Controller ID
         if len(data) >= 4:
             parsed['controller_id'] = int.from_bytes(data[0:4], 'big')
             _LOGGER.debug(f"Parsed Controller ID: {parsed['controller_id']}")
         else:
             parsed['controller_id'] = None
-        
+
         # Mesh ID
         if len(data) >= 21:
             parsed['mesh_id'] = int.from_bytes(data[19:21], 'little')
             _LOGGER.debug(f"Parsed Mesh ID: {parsed['mesh_id']}")
         else:
             parsed['mesh_id'] = None
-        
+
         # Power Status
         if len(data) > 8:
             parsed['power_status'] = bool(data[8] & 0x01)
             _LOGGER.debug(f"Parsed Power Status: {parsed['power_status']}")
         else:
             parsed['power_status'] = False
-        
+
         # Brightness
         if len(data) > 9:
             brightness_raw = data[9]
@@ -480,7 +466,7 @@ class CyncHub:
             _LOGGER.debug(f"Parsed Brightness: {parsed['brightness']}")
         else:
             parsed['brightness'] = 0
-        
+
         # Color Temperature
         if len(data) > 10:
             color_temp_raw = data[10]
@@ -489,7 +475,7 @@ class CyncHub:
             _LOGGER.debug(f"Parsed Color Temp: {parsed['color_temp_kelvin']}")
         else:
             parsed['color_temp_kelvin'] = None
-        
+
         # RGB
         if len(data) >= 14:
             parsed['rgb'] = {
@@ -497,10 +483,10 @@ class CyncHub:
                 'g': data[12],
                 'b': data[13]
             }
-            _LOGGER.debug(f"Parsed RGB: {rgb} -- R:{r}, G:{g}, B:{b}")
+            _LOGGER.debug(f"Parsed RGB: {parsed['rgb']}")
         else:
             parsed['rgb'] = {'r': 0, 'g': 0, 'b': 0}
-        
+
         return parsed
 
     async def process_pipe_packet(self, is_response: bool, data: bytes) -> None:
@@ -522,15 +508,15 @@ class CyncHub:
             if len(data) >= 6:
                 seq_num = struct.unpack(">H", data[4:6])[0]
                 _LOGGER.debug(f"Received PIPE packet with sequence {seq_num}")
-                
+
                 # Retrieve mesh_id using seq_num
                 async with self.seq_to_mesh_id_lock:
                     mesh_id = self.seq_to_mesh_id.get(seq_num)
-                
+
                 if mesh_id is None:
                     _LOGGER.error(f"No mesh_id found for sequence {seq_num}. Cannot parse PIPE packet.")
                     return
-                
+
                 # Find the device using mesh_id
                 device = next((dev for dev in self.cync_switches.values() if dev.mesh_id == mesh_id), None)
                 if not device:
@@ -539,54 +525,21 @@ class CyncHub:
             if len(data) >= 11:
                 parsed_data = self.parse_pipe_packet(data)
                 device.update_switch(
-                state = parsed_data.get('power_status'),
-                brightness = parsed_data.get('brightness'),
-                color_temp=parsed_data.get('color_temp_kelvin'),
-                rgb=parsed_data.get('rgb')
+                    state=parsed_data.get('power_status'),
+                    brightness=parsed_data.get('brightness'),
+                    color_temp=parsed_data.get('color_temp_kelvin'),
+                    rgb=parsed_data.get('rgb')
                 )
-                _LOGGER.debug(f"Parsed packet - State: {state}, Brightness: {brightness}, Color Temp: {color_temp_kelvin}, RGB: {rgb}")
-            # Call the static method using self
-            #parsed_data = self.parse_pipe_packet(data)
-            #
-            #if not parsed_data.get('mesh_id'):
-            #    _LOGGER.error("Cannot parse PIPE packet without mesh_id.")
-            #    return
-            #
-            #device = next((dev for dev in self.cync_switches.values() if dev.mesh_id == parsed_data['mesh_id']), None)
-            #if not device:
-            #    _LOGGER.warning(f"No device found with mesh_id {parsed_data['mesh_id']}")
-            #    return
-            
-            #device.update_switch(
-            #    state=parsed_data.get('power_status', False),
-            #    brightness=parsed_data.get('brightness', 0),
-            #    color_temp=parsed_data.get('color_temp_kelvin'),
-            #    rgb=parsed_data.get('rgb', {'r': 0, 'g': 0, 'b': 0})
-            #)
-
-    def update_device_state(self, device_id: int, **kwargs):
-        """Update the state of a device."""
-        # Find the device object using the device_id
-        device = self.find_device_by_id(device_id)
-        if not device:
-            _LOGGER.warning(f"Device with ID {device_id} not found.")
-            return
-
-        # Update device attributes
-        for key, value in kwargs.items():
-            setattr(device, key, value)
-
-        # Notify about the state change
-        device.publish_update()
+                _LOGGER.debug(f"Parsed packet - State: {parsed_data.get('power_status')}, Brightness: {parsed_data.get('brightness')}, Color Temp: {parsed_data.get('color_temp_kelvin')}, RGB: {parsed_data.get('rgb')}")
 
     async def send_request(self, packet: Packet, callback=None, mesh_id: Optional[int] = None):
-            """Enqueue the packet for sending and map seq_num to mesh_id if provided."""
-            if mesh_id is not None:
-                async with self.seq_to_mesh_id_lock:
-                    self.seq_to_mesh_id[packet.seq] = mesh_id
-            await self.send_queue.put((packet, callback))
-            _LOGGER.debug(f"Enqueued packet for sending: {packet}")
-    
+        """Enqueue the packet for sending and map seq_num to mesh_id if provided."""
+        if mesh_id is not None:
+            async with self.seq_to_mesh_id_lock:
+                self.seq_to_mesh_id[packet.seq] = mesh_id
+        await self.send_queue.put((packet, callback))
+        _LOGGER.debug(f"Enqueued packet for sending: {packet}")
+
     async def packet_sender(self):
         """Continuously send packets from the send_queue sequentially."""
         while not self.shutting_down:
@@ -641,13 +594,22 @@ class CyncHub:
                     callback(seq_num)
             else:
                 _LOGGER.warning(f"No pending command for sequence {seq_num}")
-        
+
         # Remove the mesh_id mapping after execution
         async with self.seq_to_mesh_id_lock:
             if seq_num in self.seq_to_mesh_id:
                 del self.seq_to_mesh_id[seq_num]
 
     # Packet creation methods
+    def create_status_request_packet(self, controller_id: int, seq: int) -> Packet:
+        """Create a packet to request the status of devices from a controller."""
+        data = (
+            controller_id.to_bytes(4, 'big')
+            + seq.to_bytes(2, 'big')
+            + bytes.fromhex('007e00000000f85206000000ffff0000567e')
+        )
+        return Packet(PACKET_TYPE_REQUEST, False, data, seq)
+
     def create_set_status_packet(self, controller_id: int, seq: int, device_index: int, status: int) -> Packet:
         # Validate inputs
         if not (0 <= controller_id <= 0xFFFFFFFF):
@@ -745,7 +707,7 @@ class CyncHub:
             + mesh_id_bytes
             + bytes.fromhex('f00000')
             + bytes([1])  # Status (1 for on)
-            + bytes([self.parsed.brightness])  # Brightness (100%)
+            + bytes([100])  # Brightness (100%)
             + bytes([254])  # Color temperature (254 indicates RGB mode)
             + bytes([r, g, b])
             + checksum.to_bytes(1, 'big')
@@ -755,7 +717,6 @@ class CyncHub:
         _LOGGER.debug(f"Set RGB Payload: {payload.hex()}")
         return Packet(PACKET_TYPE_REQUEST, False, payload, seq)
 
-    # Shutdown method to gracefully close the connection
     async def shutdown(self):
         """Gracefully shutdown the connection and tasks."""
         self.shutting_down = True
@@ -770,52 +731,46 @@ class CyncHub:
             await self.writer.wait_closed()
         _LOGGER.info("CyncHub has been shut down.")
 
-class CyncRoom:
-    def __init__(self, room_id: str, room_info: Dict[str, Any], hub) -> None:
-        """Initialize the Cync Room."""
-        self.hub = hub
-        self.room_id = room_id
-        self.home_id = room_id.split('-')[0]
-        self.name = room_info.get('name', 'unknown')
-        self.home_name = room_info.get('home_name', 'unknown')
-        self.parent_room = room_info.get('parent_room', 'unknown')
-        self.mesh_id = int(room_info.get('mesh_id', 0))
-        self.switches = room_info.get('switches', [])
-        self.subgroups = room_info.get('subgroups', [])
-        self.is_subgroup = room_info.get('isSubgroup', False)
-        self.all_room_switches = self.switches.copy()
-        self.controllers: List[str] = []
-        self.default_controller = room_info.get('room_controller', self.hub.home_controllers[self.home_id][0])
-        self._update_callback: Optional[Callable[[], None]] = None
-        self._update_parent_room: Optional[Callable[[], None]] = None
-        self.support_brightness = False
-        self.support_color_temp = False
-        self.support_rgb = False
-        self.switches_support_brightness = []
-        self.switches_support_color_temp = []
-        self.switches_support_rgb = []
-        self._command_timeout = 0.5
-        self._command_retry_time = 5
+    async def _update_connected_devices(self):
+        """Update the list of connected devices."""
+        # For simplicity, consider all devices as connected in this example
+        for home_id in self.home_devices:
+            self.connected_devices[home_id] = self.home_devices[home_id]
 
-    def initialize(self):
-        """Initialize supported features and register update functions for switches and subgroups."""
-        self.switches_support_brightness = [
-            device_id for device_id in self.switches if self.hub.cync_switches[device_id].support_brightness
-        ]
-        self.switches_support_color_temp = [
-            device_id for device_id in self.switches if self.hub.cync_switches[device_id].support_color_temp
-        ]
-        self.switches_support_rgb = [
-            device_id for device_id in self.switches if self.hub.cync_switches[device_id].support_rgb
-        ]
-        self.support_brightness = (len(self.switches_support_brightness) + len(self.groups_support_brightness)) > 0
-        self.support_color_temp = (len(self.switches_support_color_temp) + len(self.groups_support_color_temp)) > 0
-        self.support_rgb = (len(self.switches_support_rgb) + len(self.groups_support_rgb)) > 0
-        for switch_id in self.switches:
-            self.hub.cync_switches[switch_id].register_room_updater(self.update_room)
+        # After updating connected devices, set the flag
+        self.connected_devices_updated = True
+
+    async def _update_state(self):
+        """Fetch the initial state of devices after the initial connection."""
+        # Wait until connected devices are updated
+        while not self.connected_devices_updated:
+            await asyncio.sleep(2)
+
+        # Send status requests to each controller
+        for home_id, connected_devices in self.connected_devices.items():
+            if connected_devices:
+                controller = int(self.cync_switches[connected_devices[0]].switch_id)
+                seq = await self.get_seq_num()
+                packet = self.create_status_request_packet(controller_id=controller, seq=seq)
+                await self.send_request(packet)
+
+        # Wait until all switches have registered update callbacks
+        # This ensures that when the state updates are received, they are properly handled
+        while any(
+            dev._update_callback is None
+            for dev in self.cync_switches.values()
+        ):
+            await asyncio.sleep(2)
+
+        # Publish initial updates for all devices
+        for dev in self.cync_switches.values():
+            dev.publish_update()
+
+        # Set a flag indicating that the initial state has been fetched
+        self.initial_state_fetched = True
 
 class CyncSwitch:
-    def __init__(self, device_id, switch_info, room, hub) -> None:
+    def __init__(self, device_id, switch_info, hub) -> None:
         self.hub = hub
         self.device_id = device_id
         self.switch_id = switch_info.get('switch_id', '0')
@@ -826,7 +781,6 @@ class CyncSwitch:
         self.name = switch_info.get('name', 'unknown')
         self.home_name = switch_info.get('home_name', 'unknown')
         self.mesh_id = switch_info.get('mesh_id', 0)
-        self.room = room
         self.power_state = False
         self.brightness = 0
         self.color_temp_kelvin = 0
@@ -836,7 +790,6 @@ class CyncSwitch:
         self.default_controller = int(switch_info.get('switch_controller', self.hub.home_controllers[self.home_id][0]))
         self.controllers: List[int] = []
         self._update_callback: Optional[Callable[[], None]] = None
-        self._update_parent_room: Optional[Callable[[], None]] = None
         self.support_brightness = switch_info.get('BRIGHTNESS', False)
         self.support_color_temp = switch_info.get('COLORTEMP', False)
         self.support_rgb = switch_info.get('RGB', False)
@@ -874,7 +827,7 @@ class CyncSwitch:
         transition: Optional[float] = None,
         **kwargs: Any
     ) -> None:
-        """Turn on the light with optional brightness, color temperature, RGB color, effect, and transition."""
+        """Turn on the light with optional parameters without waiting for other devices."""
         _LOGGER.debug(
             f"Switch '{self.name}': Sending turn_on command with brightness={brightness}, "
             f"color_temp_kelvin={color_temp_kelvin}, rgb_color={rgb_color}"
@@ -885,11 +838,12 @@ class CyncSwitch:
 
         while not success and attempts < max_attempts:
             try:
-                # Acquire a unique sequence number
-                seq_status = await self.hub.get_seq_num()
+                # Update controllers before each attempt
+                self.update_controllers()
                 controller = self.controllers[attempts % len(self.controllers)] if self.controllers else self.default_controller
 
                 # Send Set Status (On)
+                seq_status = await self.hub.get_seq_num()
                 status_packet = self.hub.create_set_status_packet(
                     controller_id=controller,
                     seq=seq_status,
@@ -964,9 +918,6 @@ class CyncSwitch:
                     await self.hub.send_request(rgb_packet, callback=on_ack_rgb, mesh_id=self.mesh_id)
                     pending_seqs.append(seq_rgb)
 
-                # Optionally handle effects and transitions here
-                # ...
-
                 # Wait for acknowledgments within the timeout period
                 await asyncio.sleep(self._command_timeout)
 
@@ -996,20 +947,21 @@ class CyncSwitch:
         _LOGGER.debug(f"Switch '{self.name}': Sending turn_off command.")
         attempts = 0
         max_attempts = int(self._command_retry_time / self._command_timeout)
-        updated = False
+        success = False
 
-        while not updated and attempts < max_attempts:
+        while not success and attempts < max_attempts:
             try:
                 # Acquire a unique sequence number
                 seq_status = await self.hub.get_seq_num()
+                self.update_controllers()
                 controller = self.controllers[attempts % len(self.controllers)] if self.controllers else self.default_controller
 
-                # Send Set Status (On)
+                # Send Set Status (Off)
                 status_packet = self.hub.create_set_status_packet(
                     controller_id=controller,
                     seq=seq_status,
                     device_index=self.mesh_id,
-                    status=0  # 0 to turn on
+                    status=0  # 0 to turn off
                 )
 
                 # Define acknowledgment callback
@@ -1020,7 +972,7 @@ class CyncSwitch:
                 await self.hub.send_request(status_packet, callback=on_ack_status_off, mesh_id=self.mesh_id)
 
                 # Initialize a list to track pending sequence numbers
-                pending_seqs = [seq]
+                pending_seqs = [seq_status]
 
                 # Wait for acknowledgment within the timeout period
                 await asyncio.sleep(self._command_timeout)
@@ -1031,7 +983,7 @@ class CyncSwitch:
 
                 if not pending:
                     _LOGGER.info(f"Switch '{self.name}': Successfully turned off the light.")
-                    updated = True
+                    success = True
                 else:
                     attempts += 1
                     _LOGGER.warning(
@@ -1082,26 +1034,18 @@ class CyncSwitch:
             _LOGGER.debug(f"Device '{self.name}' updated: State={self.power_state}, Brightness={self.brightness}, "
                         f"Color Temp={self.color_temp_kelvin}, RGB={self.rgb}")
             self.publish_update()
-            if self._update_parent_room:
-                asyncio.create_task(self._update_parent_room())
 
     def update_controllers(self):
         """Update the list of responsive, Wi-Fi connected controller devices."""
-        connected_devices = self.hub.connected_devices[self.home_id]
+        connected_devices = self.hub.connected_devices.get(self.home_id, [])
         controllers = []
         if connected_devices:
             if int(self.switch_id) > 0 and self.device_id in connected_devices:
                 controllers.append(int(self.switch_id))
-            if self.room:
-                controllers.extend(
-                    int(self.hub.cync_switches[dev_id].switch_id)
-                    for dev_id in self.room.all_room_switches
-                    if dev_id in connected_devices and dev_id != self.device_id
-                )
             others_available = [
-                int(self.hub.cync_switches[dev_id].switch_id)
-                for dev_id in connected_devices
-                if int(self.hub.cync_switches[dev_id].switch_id) not in controllers
+                int(self.hub.cync_switches[device_id].switch_id)
+                for device_id in connected_devices
+                if device_id != self.device_id and int(self.hub.cync_switches[device_id].switch_id) not in controllers
             ]
             # Remove duplicates while preserving order
             unique_others = []
@@ -1205,7 +1149,6 @@ class CyncUserData:
         home_controllers: Dict[str, List[str]] = {}
         switchID_to_homeID: Dict[str, str] = {}
         devices: Dict[str, Any] = {}
-        rooms: Dict[str, Any] = {}
         homes = await self._get_homes()
         if not homes:
             _LOGGER.error("No homes found for user.")
@@ -1232,19 +1175,17 @@ class CyncUserData:
                         home_devices,
                         home_controllers,
                         switchID_to_homeID,
-                        devices,
-                        rooms
+                        devices
                     )
                 except Exception as e:
                     _LOGGER.error("Error processing home info: %s", e)
                     continue
 
-        if not rooms or not devices or not home_controllers or not home_devices or not switchID_to_homeID:
+        if not devices or not home_controllers or not home_devices or not switchID_to_homeID:
             _LOGGER.error("Invalid Cync configuration detected.")
             raise InvalidCyncConfiguration("Invalid Cync configuration detected.")
 
         self.cync_config = {
-            'rooms': rooms,
             'devices': devices,
             'home_devices': home_devices,
             'home_controllers': home_controllers,
@@ -1294,12 +1235,10 @@ class CyncUserData:
         home_devices: Dict[str, List[str]],
         home_controllers: Dict[str, List[str]],
         switchID_to_homeID: Dict[str, str],
-        devices: Dict[str, Any],
-        rooms: Dict[str, Any]
+        devices: Dict[str, Any]
     ) -> None:
-        """Process home information and populate devices and rooms."""
+        """Process home information and populate devices."""
         bulbs_array = home_info['bulbsArray']
-        groups_array = home_info['groupsArray']
         max_index = max(
             ((device['deviceID'] % int(home_id)) % 1000) + ((device['deviceID'] % int(home_id)) // 1000) * 256
             for device in bulbs_array
@@ -1326,8 +1265,6 @@ class CyncUserData:
                 "PLUG": device_type in Capabilities["PLUG"],
                 "FAN": device_type in Capabilities["FAN"],
                 'home_name': home.get('name', 'Unknown'),
-                'room': '',
-                'room_name': ''
             }
             if str(device_type) in Capabilities['MULTIELEMENT'] and current_index < 256:
                 devices[device_id]['MULTIELEMENT'] = Capabilities['MULTIELEMENT'][str(device_type)]
@@ -1346,48 +1283,3 @@ class CyncUserData:
             home_devices.pop(home_id, None)
             home_controllers.pop(home_id, None)
             return
-
-        for room in groups_array:
-            if room.get('deviceIDArray') or room.get('subgroupIDArray'):
-                room_id = f"{home_id}-{room['groupID']}"
-                room_controller = home_controllers[home_id][0]
-                device_ids = room.get('deviceIDArray', [])
-                available_controllers = [
-                    devices[home_devices[home_id][(dev_id % int(home_id)) % 1000 + ((dev_id % int(home_id)) // 1000) * 256]]['switch_controller']
-                    for dev_id in device_ids
-                    if 'switch_controller' in devices[home_devices[home_id][(dev_id % int(home_id)) % 1000 + ((dev_id % int(home_id)) // 1000) * 256]]
-                ]
-                if available_controllers:
-                    room_controller = available_controllers[0]
-                for dev_id in device_ids:
-                    index = (dev_id % int(home_id)) % 1000 + ((dev_id % int(home_id)) // 1000) * 256
-                    device = devices[home_devices[home_id][index]]
-                    device['room'] = room_id
-                    device['room_name'] = room.get('displayName', 'Unknown')
-                    if 'switch_controller' not in device and device.get('ONOFF', False):
-                        device['switch_controller'] = room_controller
-                rooms[room_id] = {
-                    'name': room.get('displayName', 'Unknown'),
-                    'mesh_id': room['groupID'],
-                    'room_controller': room_controller,
-                    'home_name': home.get('name', 'Unknown'),
-                    'switches': [
-                        home_devices[home_id][(dev_id % int(home_id)) % 1000 + ((dev_id % int(home_id)) // 1000) * 256]
-                        for dev_id in device_ids
-                        if devices[home_devices[home_id][(dev_id % int(home_id)) % 1000 + ((dev_id % int(home_id)) // 1000) * 256]].get('ONOFF', False)
-                    ],
-                    'isSubgroup': room.get('isSubgroup', False),
-                    'subgroups': [
-                        f"{home_id}-{subgroup_id}" for subgroup_id in room.get('subgroupIDArray', [])
-                    ]
-                }
-        # Update parent rooms for subgroups
-        for room_id, room_info in rooms.items():
-            if not room_info.get("isSubgroup", False) and room_info.get("subgroups"):
-                for subgroup_id in room_info["subgroups"].copy():
-                    subgroup = rooms.get(subgroup_id)
-                    if subgroup:
-                        subgroup["parent_room"] = room_info["name"]
-                    else:
-                        _LOGGER.warning("Subgroup %s not found. Removing from room %s.", subgroup_id, room_id)
-                        room_info["subgroups"].remove(subgroup_id)
