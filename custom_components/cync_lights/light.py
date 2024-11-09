@@ -108,7 +108,7 @@ class CyncSwitchEntity(LightEntity):
             identifiers={(DOMAIN, self.cync_switch.device_id)},
             manufacturer="Cync by Savant",
             name=self.cync_switch.name,
-            suggested_area=self.cync_switch.room.name if self.cync_switch.room else "Unknown Room",
+            suggested_area=self.cync_switch.room_name if self.cync_switch.room else "Unknown Room",
         )
 
     @property

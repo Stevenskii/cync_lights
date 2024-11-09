@@ -790,6 +790,7 @@ class CyncSwitch:
         ][0]
         self.name = switch_info.get('name', 'unknown')
         self.home_name = switch_info.get('home_name', 'unknown')
+        self.room_name = switch_info.get('room_name', 'Unknown Room')
         self.mesh_id = switch_info.get('mesh_id', 0)
         self.power_state = False
         self.brightness = 0
@@ -1193,7 +1194,7 @@ class CyncUserData:
                     _LOGGER.error("Error processing home info: %s", e)
                     continue
 
-        if not devices or not home_controllers or not home_devices or not switchID_to_homeID:
+        if not rooms or not devices or not home_controllers or not home_devices or not switchID_to_homeID:
             _LOGGER.error("Invalid Cync configuration detected.")
             raise InvalidCyncConfiguration("Invalid Cync configuration detected.")
 
@@ -1253,6 +1254,7 @@ class CyncUserData:
     ) -> None:
         """Process home information and populate devices."""
         bulbs_array = home_info['bulbsArray']
+        groups_array = home_info['groupsArray']
         max_index = max(
             ((device['deviceID'] % int(home_id)) % 1000) + ((device['deviceID'] % int(home_id)) // 1000) * 256
             for device in bulbs_array
