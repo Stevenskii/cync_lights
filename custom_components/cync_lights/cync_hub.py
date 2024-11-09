@@ -1159,6 +1159,7 @@ class CyncUserData:
         home_controllers: Dict[str, List[str]] = {}
         switchID_to_homeID: Dict[str, str] = {}
         devices: Dict[str, Any] = {}
+        rooms: Dict[str, Any] = {}
         homes = await self._get_homes()
         if not homes:
             _LOGGER.error("No homes found for user.")
@@ -1185,7 +1186,8 @@ class CyncUserData:
                         home_devices,
                         home_controllers,
                         switchID_to_homeID,
-                        devices
+                        devices,
+                        rooms
                     )
                 except Exception as e:
                     _LOGGER.error("Error processing home info: %s", e)
@@ -1196,6 +1198,7 @@ class CyncUserData:
             raise InvalidCyncConfiguration("Invalid Cync configuration detected.")
 
         self.cync_config = {
+            'rooms': rooms,
             'devices': devices,
             'home_devices': home_devices,
             'home_controllers': home_controllers,
@@ -1245,7 +1248,8 @@ class CyncUserData:
         home_devices: Dict[str, List[str]],
         home_controllers: Dict[str, List[str]],
         switchID_to_homeID: Dict[str, str],
-        devices: Dict[str, Any]
+        devices: Dict[str, Any],
+        rooms: Dict[str, Any]
     ) -> None:
         """Process home information and populate devices."""
         bulbs_array = home_info['bulbsArray']
@@ -1275,6 +1279,7 @@ class CyncUserData:
                 "PLUG": device_type in Capabilities["PLUG"],
                 "FAN": device_type in Capabilities["FAN"],
                 'home_name': home.get('name', 'Unknown'),
+                'room_name': room.get('displayName', 'Unknown'),
             }
             if str(device_type) in Capabilities['MULTIELEMENT'] and current_index < 256:
                 devices[device_id]['MULTIELEMENT'] = Capabilities['MULTIELEMENT'][str(device_type)]
