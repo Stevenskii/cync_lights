@@ -146,6 +146,8 @@ class CyncHub:
         self.send_task = self.hass.loop.create_task(self.packet_sender())
 
         self.buffer = b''  # Buffer for reading TCP data
+        
+        self.effect_mapping = self._parse_light_shows(data['cync_config'])  # Re-added light show parsing
 
         self.hass.loop.create_task(self.connect())
 
