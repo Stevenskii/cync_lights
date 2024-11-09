@@ -520,8 +520,8 @@ class CyncHub:
                 brightness = parsed_data.get('brightness'),
                 color_temp=parsed_data.get('color_temp_kelvin'),
                 rgb=parsed_data.get('rgb')
-                _LOGGER.debug(f"Parsed packet - State: {state}, Brightness: {brightness}, Color Temp: {color_temp_kelvin}, RGB: {rgb}")
                 )
+                _LOGGER.debug(f"Parsed packet - State: {state}, Brightness: {brightness}, Color Temp: {color_temp_kelvin}, RGB: {rgb}")
             # Call the static method using self
             #parsed_data = self.parse_pipe_packet(data)
             #
