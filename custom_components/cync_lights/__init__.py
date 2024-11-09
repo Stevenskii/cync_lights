@@ -11,9 +11,9 @@ from .const import DOMAIN
 from .cync_hub import CyncHub
 
 # Import platforms at module level to avoid blocking calls during event loop
-from . import light, switch
+from . import light
 
-PLATFORMS: list[str] = ["light", "switch"]
+PLATFORMS: list[str] = ["light"]
 
 _LOGGER = logging.getLogger(__name__)
 
