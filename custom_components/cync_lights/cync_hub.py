@@ -228,18 +228,34 @@ class CyncHub:
                 else:
                     _LOGGER.error(f"Authentication failed with response data: {login_response.hex()}")
                     raise Exception("Authentication failed with response data.")
-
                 # Reset backoff and retry attempts after successful connection
                 backoff = 1
                 retry_attempts = 0
 
                 # Create tasks for handling TCP messages and keep-alive
                 read_tcp_messages = asyncio.create_task(self.read_tcp_messages(), name="Read TCP Messages")
-                # TODO - Additional maintenance tasks for keep-alive
-
-                # Wait for the read_tcp_messages task to complete
-                await read_tcp_messages
-
+                maintain_connection = asyncio.create_task(self._maintain_connection(), name = "Maintain Connection")
+                update_state = asyncio.create_task(self._update_state(), name = "Update State")
+                update_connected_devices = asyncio.create_task(self._update_connected_devices(), name = "Update Connected Devices")
+                read_write_tasks = [read_tcp_messages, maintain_connection, update_state, update_connected_devices]
+                try:
+                    done, pending = await asyncio.wait(read_write_tasks,return_when=asyncio.FIRST_EXCEPTION)
+                    for task in done
+                        name = task.get_name()
+                        exception = task.exception()
+                        try:
+                            result = task.result()
+                        except Exception as e:
+                            _LOGGER.error(str(type(e).__name__) + ": " + str(e))
+                    for task in pending:
+                        task.cancel()
+                    if not self.shutting_down:
+                        _LOGGER.error("Connection to Cync server reset, restarting in 15 seconds")
+                        await asyncio.sleep(15)
+                    else:
+                        _LOGGER.debug("Cync client shutting down")
+                except Exception as e:
+                    _LOGGER.error(str(type(e).__name__) + ": " + str(e))
             except Exception as e:
                 _LOGGER.error(f"Exception in connect(): {type(e).__name__}: {e}")
                 _LOGGER.debug("Traceback:", exc_info=True)
@@ -255,7 +271,7 @@ class CyncHub:
         """Continuously read and process TCP messages from the server."""
         while not self.shutting_down:
             try:
-                data = await self.reader.read(1024)
+                data = await self.reader.read(1000)
                 if not data:
                     raise LostConnection("Connection closed by server")
 
@@ -423,6 +439,13 @@ class CyncHub:
         else:
             _LOGGER.error("Invalid packet data for packet type 8.")
 
+    async def _maintain_connection(self):
+            while not self.shutting_down:
+                await asyncio.sleep(180)
+                self.writer.write(bytes.fromhex('d300000000'))
+                await self.writer.drain()
+            raise ShuttingDown
+
     @staticmethod
     def parse_pipe_packet(data: bytes) -> Dict[str, Any]:
         """Parse PIPE packet data and return a dictionary of extracted values."""
@@ -431,21 +454,21 @@ class CyncHub:
         # Controller ID
         if len(data) >= 4:
             parsed['controller_id'] = int.from_bytes(data[0:4], 'big')
-            _LOGGER.debug(f"Parsed Controller ID: {parsed.controller_id}")
+            _LOGGER.debug(f"Parsed Controller ID: {parsed['controller_id'}")
         else:
             parsed['controller_id'] = None
         
         # Mesh ID
         if len(data) >= 21:
             parsed['mesh_id'] = int.from_bytes(data[19:21], 'little')
-            _LOGGER.debug(f"Parsed Mesh ID: {parsed.mesh_id}")
+            _LOGGER.debug(f"Parsed Mesh ID: {parsed['mesh_id']}")
         else:
             parsed['mesh_id'] = None
         
         # Power Status
         if len(data) > 8:
             parsed['power_status'] = bool(data[8] & 0x01)
-            _LOGGER.debug(f"Parsed Power Status: {parsed.power_status}")
+            _LOGGER.debug(f"Parsed Power Status: {parsed['power_status']}")
         else:
             parsed['power_status'] = False
         
@@ -454,7 +477,7 @@ class CyncHub:
             brightness_raw = data[9]
             parsed['brightness'] = max(0, min(100, round((brightness_raw / 255) * 100)))
             _LOGGER.debug(f"Raw Brightness: {brightness_raw}")
-            _LOGGER.debug(f"Parsed Brightness: {parsed.brightness}")
+            _LOGGER.debug(f"Parsed Brightness: {parsed['brightness']}")
         else:
             parsed['brightness'] = 0
         
@@ -463,7 +486,7 @@ class CyncHub:
             color_temp_raw = data[10]
             parsed['color_temp_kelvin'] = max(2000, min(7000, 2000 + (color_temp_raw * 50)))  # Placeholder conversion
             _LOGGER.debug(f"Raw Color Temp: {color_temp_raw}")
-            _LOGGER.debug(f"Parsed Color Temp: {parsed.color_temp_kelvin}")
+            _LOGGER.debug(f"Parsed Color Temp: {parsed['color_temp_kelvin']}")
         else:
             parsed['color_temp_kelvin'] = None
         
