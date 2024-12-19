@@ -337,7 +337,7 @@ class CyncHub
                                         'deviceID': self.home_devices[home_id][int(packet[21])],
                                         'power_state': int(packet[27]) > 0
                                         'brightness' = int(packet[28]) if int(packet[27]) > 0 else 0
-                                })
+                                }
                                 self._update_device_data(switch_id, device_data)
                                 if deviceID in self.switch_data:
                                         self.update_switch(
