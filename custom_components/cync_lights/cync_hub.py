@@ -104,10 +104,10 @@ class Packet:
     def __str__(self):
         return f"Packet(type=0x{self.type:02X}, response={self.is_response}, data={self.data.hex()})"
 
-def hexdump(data):
-    return ' '.join(f'{byte:02X}' for byte in data)
+    def hexdump(data):
+        return ' '.join(f'{byte:02X}' for byte in data)
 
-class CyncHub
+class CyncHub:
     def __init__(self, hass: Any, data: Dict[str, Any]):
         """Initialize the Hub"""
         self.hass = hass
