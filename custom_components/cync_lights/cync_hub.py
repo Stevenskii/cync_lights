@@ -38,17 +38,12 @@ Capabilities = {
     "RGB": [6, 7, 8, 21, 22, 23, 30, 31, 32, 33, 34, 35, 131, 132, 133, 137,
             138, 139, 140, 141, 142, 143, 146, 147, 153, 154, 156, 158, 159,
             160, 161, 162, 163, 164, 165],
-    "MOTION": [37, 49, 54],
-    "AMBIENT_LIGHT": [37, 49, 54],
     "WIFICONTROL": [36, 37, 38, 39, 40, 48, 49, 51, 52, 53, 54, 55, 56, 57,
                     58, 59, 61, 62, 63, 64, 65, 66, 67, 68, 80, 81, 128, 129,
                     130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140,
                     141, 142, 143, 144, 145, 146, 147, 148, 149, 150, 151,
                     152, 153, 154, 156, 158, 159, 160, 161, 162, 163,
-                    164, 165],
-    "PLUG": [64, 65, 66, 67, 68],
-    "FAN": [81],
-    "MULTIELEMENT": {'67': 2}
+                    164, 165]
 }
 
 # Define custom exceptions
@@ -68,20 +63,19 @@ class InvalidCyncConfiguration(Exception):
     """Cync configuration is not supported"""
 
 # Packet types (from cync-lan)
-PACKET_TYPE_REQUEST = 0x73  # Status and brightness request
-PACKET_TYPE_PING = 0x0D  # 13 in decimal
-PACKET_TYPE_PIPE = 0x07  # 7 in decimal
-
-# Pipe types (from cync-lan)
-PACKET_PIPE_TYPE_SET_STATUS = 0xD0  # Set status (on/off)
-PACKET_PIPE_TYPE_SET_LUM = 0xD2  # Set brightness
-PACKET_PIPE_TYPE_SET_CT = 0xE2  # Set color temperature
-PACKET_PIPE_TYPE_SET_RGB = 0xD4  # Set RGB color
+PACKET_TYPE_REQUEST = 0x73  # Type 115 Sending control commands to devices
+PACKET_TYPE_131 = 0x83 # Type 131 Receiving state updates and sensor data
+PACKET_TYPE_INITIAL = 0x43 # Type 67 Receiving initial state packets after authentication
+PACKET_TYPE_DEV_ACK = 0xAB # Type 171 Acknowledging and adding connected devices
+PACKET_TYPE_ACK = 0x7B # Type 123 Acknowledgment of commands sent to the server
+PACKET_TYPE_PING = 0xA3 # Type 163 Sending ping requests to check controller connectivity
+PACKET_TYPE_KEEPALIVE = 0xD3 # Type 211 Sending keep-alive messages to maintain connection
 
 # Constants
 DEFAULT_TIMEOUT = 10  # seconds
 DEFAULT_HOST = "cm.gelighting.com"
 DEFAULT_PORT = 23778
+SSL_PORT = 23779
 
 class Packet:
     def __init__(self, packet_type: int, is_response: bool, data: bytes, seq: int = None):
@@ -113,17 +107,17 @@ class Packet:
 def hexdump(data):
     return ' '.join(f'{byte:02X}' for byte in data)
 
-class CyncHub:
+class CyncHub
     def __init__(self, hass: Any, data: Dict[str, Any]):
-        """Initialize the CyncHub."""
+        """Initialize the Hub"""
         self.hass = hass
         self.host = data.get("host", DEFAULT_HOST)
         self.port = data.get("port", DEFAULT_PORT)
+        self.ssl_port = data.get("sslport", SSL_PORT)
         self.login_code = bytearray(data['cync_credentials'])
-        self.use_ssl = True  # Assuming SSL is used
-        self.ssl_context = None
+        self.use_ssl = True
+        self.ssl_context = None        
         self.reader, self.writer, self.logged_in, self.shutting_down = None, None, False, False
-
         self.home_devices = data['cync_config']['home_devices']
         self.home_controllers = data['cync_config']['home_controllers']
         self.switchID_to_homeID = data['cync_config']['switchID_to_homeID']
@@ -147,11 +141,19 @@ class CyncHub:
 
         self.buffer = b''  # Buffer for reading TCP data
         
-        self.effect_mapping = self._parse_light_shows(data['cync_config'])  # Re-added light show parsing
+        self.effect_mapping = self.parse_light_shows(data['cync_config'])  # Re-added light show parsing
 
         self.hass.loop.create_task(self.connect())
 
-    def _parse_light_shows(self, cync_config) -> Dict[str, Any]:
+
+    async def setup_ssl_context(self) -> None:
+        """Set up SSL context asynchronously."""
+        if self.use_ssl:
+            self.ssl_context = await self.hass.async_add_executor_job(ssl.create_default_context)
+        else:
+            self.ssl_context = None
+
+    def parse_light_shows(self, cync_config) -> Dict[str, Any]:
         """Parse lightShows data from cync_config and create a mapping."""
         effect_mapping = {}
         for home_info in cync_config.get('homes', {}).values():
@@ -165,13 +167,14 @@ class CyncHub:
             self.seq_num = (self.seq_num + 1) % 65536
             return self.seq_num
 
-    async def setup_ssl_context(self) -> None:
-        """Set up SSL context asynchronously."""
-        if self.use_ssl:
-            self.ssl_context = await self.hass.async_add_executor_job(ssl.create_default_context)
-        else:
-            self.ssl_context = None
-
+    def disconnect(self):
+        self.shutting_down = True
+        for home_controllers in self.home_controllers.values(): #send packets to server to generate data to be read which will initiate shutdown
+            for controller in home_controllers:
+                seq = self.get_seq_num()
+                state_request = bytes.fromhex('7300000018') + int(controller).to_bytes(4,'big') + seq.to_bytes(2,'big') + bytes.fromhex('007e00000000f85206000000ffff0000567e')
+                self.loop.call_soon_threadsafe(self._send_request,state_request)
+            
     async def connect(self):
         """
         Establish TCP connection and authenticate, with retries and task management.
@@ -189,7 +192,7 @@ class CyncHub:
                 # Attempt to establish a secure connection
                 try:
                     _LOGGER.debug("Trying to establish SSL connection on port 23779.")
-                    self.reader, self.writer = await asyncio.open_connection(self.host, self.port, ssl=self.ssl_context)
+                    self.reader, self.writer = await asyncio.open_connection(self.host, self.ssl_port, ssl=self.ssl_context)
                 except Exception as e:
                     _LOGGER.debug(f"SSL connection failed: {e}. Retrying with SSL context check disabled.")
                     if self.ssl_context:
@@ -219,7 +222,6 @@ class CyncHub:
                 # Process login response
                 if login_response.startswith(b'\x18\x00\x00\x00\x02\x00\x00'):
                     self.logged_in = True
-                    self.connected = True  # Update connection state
                     _LOGGER.debug("Successfully authenticated with the server.")
                 else:
                     _LOGGER.error(f"Authentication failed with response data: {login_response.hex()}")
@@ -229,7 +231,7 @@ class CyncHub:
                 retry_attempts = 0
 
                 # Create tasks for handling TCP messages and keep-alive
-                read_tcp_messages = asyncio.create_task(self.read_tcp_messages(), name="Read TCP Messages")
+                read_tcp_messages = asyncio.create_task(self._read_tcp_messages(), name="Read TCP Messages")
                 maintain_connection = asyncio.create_task(self._maintain_connection(), name="Maintain Connection")
                 update_state = asyncio.create_task(self._update_state(), name="Update State")
                 update_connected_devices = asyncio.create_task(self._update_connected_devices(), name="Update Connected Devices")
@@ -263,177 +265,242 @@ class CyncHub:
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, max_backoff)  # Exponential backoff
 
-    async def read_tcp_messages(self) -> None:
+    async def _read_tcp_messages(self) -> None:
         """Continuously read and process TCP messages from the server."""
         while not self.shutting_down:
-            try:
                 data = await self.reader.read(1000)
-                if not data:
-                    raise LostConnection("Connection closed by server")
+                if len(data) == 0:
+                    self.logged_in = False
+                    raise LostConnection
 
-                self.buffer += data
-                while len(self.buffer) >= 5:
-                    header = self.buffer[:5]
-                    packet_type, is_response = (header[0] & 0xF0) >> 4, (header[0] & 0x08) != 0
-                    packet_length = struct.unpack(">I", header[1:5])[0]
-                    if len(self.buffer) < 5 + packet_length:
-                        break
-                    packet_data = self.buffer[5:5 + packet_length]
-                    self.buffer = self.buffer[5 + packet_length:]
-                    await self.handle_packet(packet_type, is_response, packet_data)
-            except LostConnection:
-                _LOGGER.warning("Lost connection to the server. Attempting to reconnect...")
-                await self.shutdown()
-                await asyncio.sleep(5)  # Wait before reconnecting
-                await self.connect()  # Re-establish the connection
-                break
-            except Exception as e:
-                _LOGGER.error(f"Error while reading TCP messages: {e}")
-                _LOGGER.debug("Traceback:", exc_info=True)
-                await asyncio.sleep(5)  # Retry after delay
+                while len(data) >= 12:
+                    packet_type = int(data[0])
+                    packet_length = struct.unpack(">I", data[1:5])[0]
+                    packet = data[5:packet_length+5]
+                try:
+                    self.switch_data = {}
+                    # Parse packet data
+                    parsed = {}
+                    if packet_length == len(packet):
+                        if packet_type == PACKET_TYPE_REQUEST: #115
+                            #Switch ID 0-3
+                            parsed['switch_id'] = struct.unpack(">I", packet[0:4])[0]
+                            switch_id = parsed['switch_id']
+                            home_id = self.switchID_to_homeID[switch_id]
+                            # Ensure self.switch_data has a structure for this switch_id
+                            if switch_id not in self.switch_data:
+                                self.switch_data[switch_id] = {'devices': []}
+                            #Response ID 4-5
+                            parsed['response_id'] = struct.unpack(">H", packet[4:6])[0]
+                            response_packet = bytes.fromhex('7300000007') + int(switch_id).to_bytes(4,'big') + response_id.to_bytes(2,'big') + bytes.fromhex('00')
+                            self.loop.call_soon_threadsafe(self._send_request, response_packet)
+                
+                            #Command ID
+                            parsed['command_id'] = int(packet_data[13])
+                            
+                            #State Update Packet
+                            if len(packet_data) > 51 and parsed['command_id'] == 82:
+                                self._add_connected_devices(switch_id, home_id)
+                                packet = packet_data[22: ]
+                                self.switch_data[switch_id] = {'devices': []}
+                                
+                                while len(packet) > 24:
+                                    device_data = {
+                                        'deviceID': self.home_devices[home_id][int(packet[21])],
+                                        'power_state': int(packet[8]) > 0
+                                        'brightness' = int(packet[12]) if int(packet[8]) > 0 else 0
+                                        'color_temp_kelvin': 2000 + ((7000 - 2000) * (int(packet[16]) / 255)),
+                                        'rgb': {
+                                            'r': packet[20],
+                                            'g': packet[21],
+                                            'b': packet[22],
+                                            'active': int(packet[16]) == 254
+                                            }
+                                    }
+                                    # Add or update the device in `self.switch_data[switch_id]['devices']`
+                                    self._update_device_data(switch_id, device_data)
+                                    if deviceID in self.switch_data:
+                                        self.update_switch(
+                                            switch_id=switch_id,
+                                            device_id=deviceID,
+                                            state=self.switch_data[switch_id]['devices'][deviceID].get('power_state'),
+                                            brightness=self.switch_data[switch_id]['devices'][deviceID].get('brightness'),
+                                            color_temp=self.switch_data[switch_id]['devices'][deviceID].get('color_temp_kelvin'),
+                                            rgb=self.switch_data[switch_id]['devices'][deviceID].get('rgb')
+                                        )
+                                    packet = packet[24:]
+                
+                            #State and Brightness Packet
+                            if len(packet_data) >= 33 and parsed['command_id'] == 219:
+                                #parse state and brightness TODO FIND OUT IF CT AND RGB
+                                device_data = {
+                                        'deviceID': self.home_devices[home_id][int(packet[21])],
+                                        'power_state': int(packet[27]) > 0
+                                        'brightness' = int(packet[28]) if int(packet[27]) > 0 else 0
+                                })
+                                self._update_device_data(switch_id, device_data)
+                                if deviceID in self.switch_data:
+                                        self.update_switch(
+                                            switch_id=switch_id,
+                                            device_id=deviceID,
+                                            state=self.switch_data[switch_id]['devices'][deviceID].get('power_state'),
+                                            brightness=self.switch_data[switch_id]['devices'][deviceID].get('brightness'),
+                                            color_temp=self.switch_data[switch_id]['devices'][deviceID].get('color_temp_kelvin'),
+                                            rgb=self.switch_data[switch_id]['devices'][deviceID].get('rgb')
+                                        )
+                                        
+                                _LOGGER.debug(f"Packet data ({len(packet_data)} bytes): {hexdump(packet_data)}")
+                            
+                        elif packet_type == PACKET_TYPE_131
+                        #Process 131 type instead of 115, basically a duplicate section
+                            parsed['switch_id'] = struct.unpack(">I", packet[0:4])[0]
+                            switch_id = parsed['switch_id']
+                            home_id = self.switchID_to_homeID[switch_id]
+                            if len(packet_data) >= 33 and parsed['command_id'] == 219:
+                            #parse state and brightness change packet
+                            device_data = {
+                                    'deviceID': self.home_devices[home_id][int(packet[21])],
+                                    'power_state': int(packet[27]) > 0
+                                    'brightness' = int(packet[28]) if int(packet[27]) > 0 else 0
+                            }
+                            self._update_device_data(switch_id, device_data)
+                            if deviceID in self.switch_data:
+                                    self.update_switch(
+                                        switch_id=switch_id,
+                                        device_id=deviceID,
+                                        state=self.switch_data[switch_id]['devices'][deviceID].get('power_state'),
+                                        brightness=self.switch_data[switch_id]['devices'][deviceID].get('brightness'),
+                                        color_temp=self.switch_data[switch_id]['devices'][deviceID].get('color_temp_kelvin'),
+                                        rgb=self.switch_data[switch_id]['devices'][deviceID].get('rgb')
+                                    )
+                                    
+                            _LOGGER.debug(f"Packet data ({len(packet_data)} bytes): {hexdump(packet_data)}")
+                                
+                        elif packet_type == PACKET_TYPE_INITIAL and int(packet_data[4]) == 1 and int(packet_data[5]) == 1 and int(packet_data[6]) == 1: #67
+                        #Process initial state packet
+                            parsed['switch_id'] = struct.unpack(">I", packet[0:4])[0]
+                            switch_id = parsed['switch_id']
+                            home_id = self.switchID_to_homeID[switch_id]
+                            packet = packet_data[7: ]
+                            while len(packet) >= 19:
+                                device_data = {
+                                        'deviceID': self.home_devices[home_id][int(packet[3])],
+                                        'power_state': int(packet[4]) > 0
+                                        'brightness' = int(packet[5]) if int(packet[4]) > 0 else 0
+                                        'color_temp_kelvin': 2000 + ((7000 - 2000) * (int(packet[6]) / 255)),
+                                        'rgb': {
+                                            'r': packet[7],
+                                            'g': packet[8],
+                                            'b': packet[9],
+                                            'active': int(packet[6]) == 254
+                                            }
+                                    }
+                                self._update_device_data(switch_id, device_data)
+                                if deviceID in self.switch_data:
+                                    self.update_switch(
+                                        switch_id=switch_id,
+                                        device_id=deviceID,
+                                        state=self.switch_data[switch_id]['devices'][deviceID].get('power_state'),
+                                        brightness=self.switch_data[switch_id]['devices'][deviceID].get('brightness'),
+                                        color_temp=self.switch_data[switch_id]['devices'][deviceID].get('color_temp_kelvin'),
+                                        rgb=self.switch_data[switch_id]['devices'][deviceID].get('rgb')
+                                    )
+                
+                        elif packet_type == PACKET_TYPE_DEV_ACK:
+                            parsed['switch_id'] = struct.unpack(">I", packet[0:4])[0]
+                            switch_id = parsed['switch_id']
+                            home_id = self.switchID_to_homeID[switch_id]
+                            device_data = {}
+                            self._update_device_data(switch_id, device_data)
+                        
+                        elif packet_type == PACKET_TYPE_ACK:
+                            seq = str(struct.unpack(">H", packet[9:11])[0])
+                            command_received = self.pending_commands.get(seq,None)
+                                if command_received is not None:
+                                    command_received(seq)
+            
+            
+        except LostConnection:
+            _LOGGER.warning("Lost connection to the server. Attempting to reconnect...")
+            await self.disconnect()
+            await asyncio.sleep(5)  # Wait before reconnecting
+            await self.connect()  # Re-establish the connection
+            break
+        except Exception as e:
+            _LOGGER.error(f"Error while reading TCP messages: {e}")
+            _LOGGER.debug("Traceback:", exc_info=True)
+            await asyncio.sleep(5)  # Retry after delay
 
-    async def handle_packet(self, packet_type: int, is_response: bool, packet_data: bytes) -> None:
-        """Handle incoming packets based on their type."""
-        if packet_type == PACKET_TYPE_PING:
-            _LOGGER.debug("Received PING packet.")
-            # Optionally, respond to the PING if necessary
-        elif packet_type == PACKET_TYPE_PIPE:
-            _LOGGER.debug("Received PIPE packet.")
-            await self.process_pipe_packet(is_response, packet_data)
-        elif packet_type == 0x04:
-            _LOGGER.debug("Received packet type 4 (Initial Client State).")
-            await self.process_type_4_packet(is_response, packet_data)
-        elif packet_type == 0x08:
-            _LOGGER.debug("Received packet type 8 (Iteration Request).")
-            await self.process_type_8_packet(is_response, packet_data)
+    # Helper function to add or update device data
+    def _update_device_data(self, switch_id, new_device_data):
+        """Add or update device data within switch_data."""
+        # Check if device already exists in the list of devices for the switch_id
+        existing_device = next(
+            (device for device in self.switch_data[switch_id]['devices'] if device['deviceID'] == new_device_data['deviceID']),
+            None
+        )
+        if existing_device:
+            # Update existing device data
+            existing_device.update(new_device_data)
         else:
-            _LOGGER.warning(f"Unhandled packet type: {packet_type}")
-            _LOGGER.debug(f"Packet data ({len(packet_data)} bytes): {hexdump(packet_data)}")
+            # Append new device data
+            self.switch_data[switch_id]['devices'].append(new_device_data)
 
-    async def process_type_4_packet(self, is_response: bool, data: bytes) -> None:
-        """Process packet type 4 (Initial Client State)."""
-        _LOGGER.debug("Processing packet type 4 (Initial Client State).")
-        _LOGGER.debug(f"Packet data: {hexdump(data)}")
-
-        # Ensure there is enough data to extract the controller ID
-        if len(data) < 4:
-            _LOGGER.error("Packet data too short to extract controller ID.")
+    def update_switch(self, switch_id, device_id, state, brightness, color_temp: Optional[int] = None, rgb: Optional[Dict[str, int]] = None):
+        """Update the state of the device in switch_data as updates are received from the Cync server."""
+    
+        # Find the switch and device entry in `self.switch_data`
+        switch_data = self.switch_data.get(switch_id)
+        if not switch_data:
+            _LOGGER.warning(f"Switch ID {switch_id} not found in switch_data.")
             return
-
-        # Extract controller ID
-        controller_id = int.from_bytes(data[0:4], 'big')
-
-        # Initialize variables
-        device_index = None
-        power_status = None
-        brightness = None
-        color_temp = None
-        r = g = b = None
-
-        if len(data) >= 22:
-            # Packet is long enough to extract all fields
-
-            # Extract device index (mesh_id) from data[19:21]
-            device_index = int.from_bytes(data[19:21], 'little')
-
-            # Extract power status from data[5]
-            power_status_byte = data[5]
-            power_status = bool(power_status_byte & 0x01)
-
-            # Extract brightness from data[12]
-            brightness = data[12]
-
-            # Extract color temperature from data[13]
-            color_temp = data[13]
-
-            # Extract RGB values from data[14:17]
-            r = data[14]
-            g = data[15]
-            b = data[16]
-
-            _LOGGER.debug(f"Controller ID: {controller_id}, Device Index (Mesh ID): {device_index}")
-
-            # Find the device using mesh_id
-            device = next((dev for dev in self.cync_switches.values() if dev.mesh_id == device_index), None)
-            if not device:
-                _LOGGER.warning(f"No device found with mesh_id {device_index}")
-                return
-
+    
+        # Locate the specific device within the switch_data
+        device_data = next((device for device in switch_data['devices'] if device['deviceID'] == device_id), None)
+        if not device_data:
+            _LOGGER.warning(f"Device ID {device_id} not found under switch ID {switch_id}.")
+            return
+    
+        # Update the device data as required
+        updated = False
+        if device_data['power_state'] != state:
+            device_data['power_state'] = state
+            updated = True
+    
+        if brightness is not None and device_data['brightness'] != brightness:
+            device_data['brightness'] = brightness
+            updated = True
+    
+        if color_temp is not None:
+            # Clamp color temperature within supported range
+            color_temp_kelvin = max(self.min_color_temp_kelvin, min(self.max_color_temp_kelvin, color_temp))
+            if device_data['color_temp_kelvin'] != color_temp_kelvin:
+                device_data['color_temp_kelvin'] = color_temp_kelvin
+                updated = True
+    
+        if rgb is not None:
+            # Clamp RGB values within 0-255
+            rgb_clamped = {
+                'r': max(0, min(255, rgb.get('r', device_data['rgb']['r']))),
+                'g': max(0, min(255, rgb.get('g', device_data['rgb']['g']))),
+                'b': max(0, min(255, rgb.get('b', device_data['rgb']['b'])))
+            }
+            if device_data['rgb'] != rgb_clamped:
+                device_data['rgb'] = rgb_clamped
+                updated = True
+    
+        if updated:
             _LOGGER.debug(
-                f"Device ID: {device.device_id}, Power Status: {power_status}, "
-                f"Brightness: {brightness}, Color Temp: {color_temp}, RGB: ({r}, {g}, {b})"
+                f"Device '{device_id}' updated under switch '{switch_id}': State={device_data['power_state']}, "
+                f"Brightness={device_data['brightness']}, Color Temp={device_data['color_temp_kelvin']}, "
+                f"RGB={device_data['rgb']}"
             )
-
-            # Update the device state with available data
-            device.update_switch(
-                state=power_status,
-                brightness=brightness,
-                color_temp=color_temp,
-                rgb={'r': r, 'g': g, 'b': b}
-            )
-        elif len(data) >= 7:
-            device_index = data[4]
-            power_status_byte = data[5]
-            power_status = bool(power_status_byte & 0x01)
-
-            _LOGGER.debug(f"Packet data: {hexdump(data)}")
-            _LOGGER.debug(f"Controller ID: {controller_id}")
-            _LOGGER.debug(f"Extracted device_index (mesh_id): {device_index} from data[4]: {data[4]:02X}")
-            _LOGGER.debug(f"Extracted power_status_byte: {power_status_byte:02X} from data[5]: {data[5]:02X}")
-            _LOGGER.debug(f"Power Status: {power_status}")
-
-            # Find the device using mesh_id
-            device = next((dev for dev in self.cync_switches.values() if dev.mesh_id == device_index), None)
-            if not device:
-                _LOGGER.warning(f"No device found with mesh_id {device_index}")
-                return
-
-            # Update the device state with minimal data
-            device.update_switch(state=power_status)
-        else:
-            _LOGGER.error("Packet data too short to extract device index and power status.")
-            return
-
-    async def process_type_8_packet(self, is_response: bool, data: bytes) -> None:
-        """Process packet type 8 (Iteration Request)."""
-        _LOGGER.debug("Processing packet type 8 (Iteration Request).")
-
-        if len(data) >= 20:
-            # Extract controller ID
-            controller_id = int.from_bytes(data[0:4], 'big')
-            # Extract device index (mesh_id) using 'little' endianness
-            device_index = int.from_bytes(data[21:23], 'little')
-            _LOGGER.debug(f"Iteration Request data: {hexdump(data)}")
-            _LOGGER.debug(f"Controller ID: {controller_id}, Device Index (Mesh ID): {device_index}")
-
-            # Find the device
-            device = next((dev for dev in self.cync_switches.values() if dev.mesh_id == device_index), None)
-            if not device:
-                _LOGGER.warning(f"No device found with mesh_id {device_index}")
-                return
-
-            # Extract power status
-            power_status = bool(data[8])
-            # Extract brightness
-            brightness = data[9]
-            # Extract color temperature
-            color_temp = data[10]
-            # Extract RGB values
-            r = data[11]
-            g = data[12]
-            b = data[13]
-
-            _LOGGER.debug(f"Device ID: {device.device_id}, Power Status: {power_status}, Brightness: {brightness}, Color Temp: {color_temp}, RGB: ({r}, {g}, {b})")
-
-            # Update the device state
-            device.update_switch(
-                state=power_status,
-                brightness=brightness,
-                color_temp=color_temp,
-                rgb={'r': r, 'g': g, 'b': b}
-            )
-        else:
-            _LOGGER.error("Invalid packet data for packet type 8.")
+            self.publish_update(switch_id, device_id)
+            
+    def publish_update(self, switch_id, device_id):
+        """Publish the update to Home Assistant."""
+        if self._update_callback:
+            self.hub.hass.loop.call_soon_threadsafe(self._update_callback)
 
     async def _maintain_connection(self):
         while not self.shutting_down:
@@ -441,314 +508,35 @@ class CyncHub:
             self.writer.write(bytes.fromhex('d300000000'))
             await self.writer.drain()
         raise ShuttingDown
-
-    @staticmethod
-    def parse_pipe_packet(data: bytes) -> Dict[str, Any]:
-        """Parse PIPE packet data and return a dictionary of extracted values."""
-        parsed = {}
-
-        # Controller ID
-        if len(data) >= 4:
-            parsed['controller_id'] = int.from_bytes(data[0:4], 'big')
-            _LOGGER.debug(f"Parsed Controller ID: {parsed['controller_id']}")
-        else:
-            parsed['controller_id'] = None
-
-        # Mesh ID
-        if len(data) >= 21:
-            parsed['mesh_id'] = int.from_bytes(data[19:21], 'little')
-            _LOGGER.debug(f"Parsed Mesh ID: {parsed['mesh_id']}")
-        else:
-            parsed['mesh_id'] = None
-
-        # Power Status
-        if len(data) > 8:
-            parsed['power_status'] = bool(data[8] & 0x01)
-            _LOGGER.debug(f"Parsed Power Status: {parsed['power_status']}")
-        else:
-            parsed['power_status'] = False
-
-        # Brightness
-        if len(data) > 9:
-            brightness_raw = data[9]
-            parsed['brightness'] = max(0, min(100, round((brightness_raw / 255) * 100)))
-            _LOGGER.debug(f"Raw Brightness: {brightness_raw}")
-            _LOGGER.debug(f"Parsed Brightness: {parsed['brightness']}")
-        else:
-            parsed['brightness'] = 0
-
-        # Color Temperature
-        if len(data) > 10:
-            color_temp_raw = data[10]
-            parsed['color_temp_kelvin'] = max(2000, min(7000, 2000 + (color_temp_raw * 50)))  # Placeholder conversion
-            _LOGGER.debug(f"Raw Color Temp: {color_temp_raw}")
-            _LOGGER.debug(f"Parsed Color Temp: {parsed['color_temp_kelvin']}")
-        else:
-            parsed['color_temp_kelvin'] = None
-
-        # RGB
-        if len(data) >= 14:
-            parsed['rgb'] = {
-                'r': data[11],
-                'g': data[12],
-                'b': data[13]
-            }
-            _LOGGER.debug(f"Parsed RGB: {parsed['rgb']}")
-        else:
-            parsed['rgb'] = {'r': 0, 'g': 0, 'b': 0}
-
-        return parsed
-
-    async def process_pipe_packet(self, is_response: bool, data: bytes) -> None:
-        """Process PIPE packets."""
-        if is_response:
-            if len(data) >= 6:
-                seq_num = struct.unpack(">H", data[4:6])[0]
-                _LOGGER.debug(f"Acknowledgment received for sequence {seq_num}")
-                await self.execute_callback(seq_num)
-                # Remove the mapping as it's acknowledged
-                async with self.seq_to_mesh_id_lock:
-                    if seq_num in self.seq_to_mesh_id:
-                        del self.seq_to_mesh_id[seq_num]
-            else:
-                _LOGGER.error(f"Invalid acknowledgment packet: {hexdump(data)}")
-        else:
-            _LOGGER.debug(f"Processing PIPE request with data: {hexdump(data)}")
-            # Extract the sequence number from the packet
-            if len(data) >= 6:
-                seq_num = struct.unpack(">H", data[4:6])[0]
-                _LOGGER.debug(f"Received PIPE packet with sequence {seq_num}")
-
-                # Retrieve mesh_id using seq_num
-                async with self.seq_to_mesh_id_lock:
-                    mesh_id = self.seq_to_mesh_id.get(seq_num)
-
-                if mesh_id is None:
-                    _LOGGER.error(f"No mesh_id found for sequence {seq_num}. Cannot parse PIPE packet.")
-                    return
-
-                # Find the device using mesh_id
-                device = next((dev for dev in self.cync_switches.values() if dev.mesh_id == mesh_id), None)
-                if not device:
-                    _LOGGER.warning(f"No device found with mesh_id {mesh_id}")
-                    return
-            if len(data) >= 11:
-                parsed_data = self.parse_pipe_packet(data)
-                device.update_switch(
-                    state=parsed_data.get('power_status'),
-                    brightness=parsed_data.get('brightness'),
-                    color_temp=parsed_data.get('color_temp_kelvin'),
-                    rgb=parsed_data.get('rgb')
-                )
-                _LOGGER.debug(f"Parsed packet - State: {parsed_data.get('power_status')}, Brightness: {parsed_data.get('brightness')}, Color Temp: {parsed_data.get('color_temp_kelvin')}, RGB: {parsed_data.get('rgb')}")
-
-    async def send_request(self, packet: Packet, callback=None, mesh_id: Optional[int] = None):
-        """Enqueue the packet for sending and map seq_num to mesh_id if provided."""
-        if mesh_id is not None:
-            async with self.seq_to_mesh_id_lock:
-                self.seq_to_mesh_id[packet.seq] = mesh_id
-        await self.send_queue.put((packet, callback))
-        _LOGGER.debug(f"Enqueued packet for sending: {packet}")
-
-    async def packet_sender(self):
-        """Continuously send packets from the send_queue sequentially."""
-        while not self.shutting_down:
-            try:
-                packet, callback = await self.send_queue.get()
-                if not self.writer:
-                    _LOGGER.warning("Writer is not available. Re-enqueueing packet and waiting.")
-                    await self.send_queue.put((packet, callback))
-                    await asyncio.sleep(1)
-                    continue
-
-                self.writer.write(packet.encode())
-                await self.writer.drain()
-                _LOGGER.debug(f"Sent packet: {packet}")
-
-                if callback and packet.seq is not None:
-                    async with self.pending_commands_lock:
-                        self.pending_commands[packet.seq] = callback
-
-                # Add a delay to prevent packet flooding
-                await asyncio.sleep(0.1)  # 100ms delay between packets
-
-                self.send_queue.task_done()
-            except (ConnectionResetError, BrokenPipeError):
-                _LOGGER.error("Connection reset by peer. Initiating reconnection.")
-                self.connected = False
-                await self.shutdown()
-                await asyncio.sleep(5)  # Wait before reconnecting
-                await self.connect()
-            except asyncio.CancelledError:
-                _LOGGER.info("Packet sender task cancelled.")
-                break
-            except Exception as e:
-                _LOGGER.error(f"Failed to send packet from queue: {e}")
-                _LOGGER.debug("Traceback:", exc_info=True)
-                await asyncio.sleep(5)  # Wait before retrying
-
-    def extract_seq_num(self, packet: Packet) -> Optional[int]:
-        """Extract sequence number from a packet."""
-        if packet.type != PACKET_TYPE_REQUEST or len(packet.data) < 6:
-            return None
-        return struct.unpack(">H", packet.data[4:6])[0]
-
-    async def execute_callback(self, seq_num: int):
-        """Execute the callback associated with the given sequence number."""
-        async with self.pending_commands_lock:
-            if seq_num in self.pending_commands:
-                callback = self.pending_commands.pop(seq_num)
-                if asyncio.iscoroutinefunction(callback):
-                    await callback(seq_num)
-                else:
-                    callback(seq_num)
-            else:
-                _LOGGER.warning(f"No pending command for sequence {seq_num}")
-
-        # Remove the mesh_id mapping after execution
-        async with self.seq_to_mesh_id_lock:
-            if seq_num in self.seq_to_mesh_id:
-                del self.seq_to_mesh_id[seq_num]
-
-    # Packet creation methods
-    def create_status_request_packet(self, controller_id: int, seq: int) -> Packet:
-        """Create a packet to request the status of devices from a controller."""
-        data = (
-            controller_id.to_bytes(4, 'big')
-            + seq.to_bytes(2, 'big')
-            + bytes.fromhex('007e00000000f85206000000ffff0000567e')
-        )
-        return Packet(PACKET_TYPE_REQUEST, False, data, seq)
-
-    def create_set_status_packet(self, controller_id: int, seq: int, device_index: int, status: int) -> Packet:
-        # Validate inputs
-        if not (0 <= controller_id <= 0xFFFFFFFF):
-            raise ValueError(f"Controller ID {controller_id} out of range for unsigned int.")
-        if not (0 <= seq <= 0xFFFF):
-            raise ValueError(f"Sequence number {seq} out of range for unsigned short.")
-        if status not in (0, 1):
-            raise ValueError(f"Status {status} must be 0 or 1.")
-
-        mesh_id_bytes = device_index.to_bytes(2, 'little')
-
-        # Calculate checksum
-        checksum = (429 + mesh_id_bytes[0] + mesh_id_bytes[1] + status) % 256
-
-        # Construct payload only (exclude the manual header)
-        payload = (
-            controller_id.to_bytes(4, 'big')
-            + seq.to_bytes(2, 'big')
-            + bytes.fromhex('007e00000000f8d00d000000000000')
-            + mesh_id_bytes
-            + bytes.fromhex('d00000')
-            + status.to_bytes(1, 'big')
-            + bytes.fromhex('0000')
-            + checksum.to_bytes(1, 'big')
-            + bytes.fromhex('7e')
-        )
-
-        _LOGGER.debug(f"Set Status Payload: {payload.hex()}")
-        return Packet(PACKET_TYPE_REQUEST, False, payload, seq)
-
-    def create_set_brightness_packet(self, controller_id: int, seq: int, device_index: int, brightness: int) -> Packet:
-        # Ensure brightness is within 0 to 100
-        brightness = max(0, min(100, brightness))
-
-        mesh_id_bytes = device_index.to_bytes(2, 'little')
-
-        # Calculate checksum
-        checksum = (469 + mesh_id_bytes[0] + mesh_id_bytes[1] + brightness) % 256
-
-        # Construct payload only
-        payload = (
-            controller_id.to_bytes(4, 'big')
-            + seq.to_bytes(2, 'big')
-            + bytes.fromhex('007e00000000f8e10c000000000000')
-            + mesh_id_bytes
-            + bytes.fromhex('e1000005')
-            + brightness.to_bytes(1, 'big')
-            + checksum.to_bytes(1, 'big')
-            + bytes.fromhex('7e')
-        )
-
-        _LOGGER.debug(f"Set Brightness Payload: {payload.hex()}")
-        return Packet(PACKET_TYPE_REQUEST, False, payload, seq)
-
-    def create_set_ct_packet(self, controller_id: int, seq: int, device_index: int, ct: int) -> Packet:
-        # Ensure ct (color temperature) is within 0 to 100
-        ct = max(0, min(100, ct))
-
-        mesh_id_bytes = device_index.to_bytes(2, 'little')
-
-        # Calculate checksum
-        checksum = (469 + mesh_id_bytes[0] + mesh_id_bytes[1] + ct) % 256
-
-        # Construct payload only
-        payload = (
-            controller_id.to_bytes(4, 'big')
-            + seq.to_bytes(2, 'big')
-            + bytes.fromhex('007e00000000f8e20c000000000000')
-            + mesh_id_bytes
-            + bytes.fromhex('e2000005')
-            + ct.to_bytes(1, 'big')
-            + checksum.to_bytes(1, 'big')
-            + bytes.fromhex('7e')
-        )
-
-        _LOGGER.debug(f"Set Color Temperature Payload: {payload.hex()}")
-        return Packet(PACKET_TYPE_REQUEST, False, payload, seq)
-
-    def create_set_rgb_packet(self, controller_id: int, seq: int, device_index: int, r: int, g: int, b: int) -> Packet:
-        # Ensure RGB values are within 0 to 255
-        r = max(0, min(255, r))
-        g = max(0, min(255, g))
-        b = max(0, min(255, b))
-
-        mesh_id_bytes = device_index.to_bytes(2, 'little')
-
-        # Calculate checksum
-        checksum = (496 + mesh_id_bytes[0] + mesh_id_bytes[1] + 1 + 100 + 254 + r + g + b) % 256
-
-        # Construct payload only
-        payload = (
-            controller_id.to_bytes(4, 'big')
-            + seq.to_bytes(2, 'big')
-            + bytes.fromhex('007e00000000f8f010000000000000')
-            + mesh_id_bytes
-            + bytes.fromhex('f00000')
-            + bytes([1])  # Status (1 for on)
-            + bytes([100])  # Brightness (100%)
-            + bytes([254])  # Color temperature (254 indicates RGB mode)
-            + bytes([r, g, b])
-            + checksum.to_bytes(1, 'big')
-            + bytes.fromhex('7e')
-        )
-
-        _LOGGER.debug(f"Set RGB Payload: {payload.hex()}")
-        return Packet(PACKET_TYPE_REQUEST, False, payload, seq)
-
-    async def shutdown(self):
-        """Gracefully shutdown the connection and tasks."""
-        self.shutting_down = True
-        if self.send_task:
-            self.send_task.cancel()
-            try:
-                await self.send_task
-            except asyncio.CancelledError:
-                pass
-        if self.writer:
-            self.writer.close()
-            await self.writer.wait_closed()
-        _LOGGER.info("CyncHub has been shut down.")
+    
+    def _send_request(self, request):
+        async def send():
+            self.writer.write(request)
+            await self.writer.drain()
+        self.loop.create_task(send())
 
     async def _update_connected_devices(self):
-        """Update the list of connected devices."""
-        # For simplicity, consider all devices as connected in this example
-        for home_id in self.home_devices:
-            self.connected_devices[home_id] = self.home_devices[home_id]
-
-        # After updating connected devices, set the flag
-        self.connected_devices_updated = True
+        while not self.shutting_down:
+            self.connected_devices_updated = False
+            for devices in self.connected_devices.values():
+                devices.clear()
+            while not self.logged_in:
+                await asyncio.sleep(2)
+            attempts = 0
+            while True in [len(devices) < len(self.home_controllers[home_id]) * 0.5 for home_id,devices in self.connected_devices.items()] and attempts < 10:
+                for home_id, home_controllers in self.home_controllers.items():
+                    for controller in home_controllers:
+                        seq = self.get_seq_num()
+                        ping = bytes.fromhex('a300000007') + int(controller).to_bytes(4,'big') + seq.to_bytes(2,'big') + bytes.fromhex('00')
+                        self.loop.call_soon_threadsafe(self._send_request, ping)
+                        await asyncio.sleep(0.15)
+                await asyncio.sleep(2)
+                attempts += 1            
+            for dev in self.cync_switches.values():
+                dev.update_controllers()
+            self.connected_devices_updated = True
+            await asyncio.sleep(3600)
+        raise ShuttingDown
 
     async def _update_state(self):
         """Fetch the initial state of devices after the initial connection."""
@@ -762,7 +550,7 @@ class CyncHub:
                 controller = int(self.cync_switches[connected_devices[0]].switch_id)
                 seq = await self.get_seq_num()
                 packet = self.create_status_request_packet(controller_id=controller, seq=seq)
-                await self.send_request(packet)
+                await self._send_request(packet)
 
         # Wait until all switches have registered update callbacks
         # This ensures that when the state updates are received, they are properly handled
@@ -776,8 +564,22 @@ class CyncHub:
         for dev in self.cync_switches.values():
             dev.publish_update()
 
-        # Set a flag indicating that the initial state has been fetched
-        self.initial_state_fetched = True
+    def combo_control(self,state,brightness,color_tone,rgb,switch_id,mesh_id,seq):
+        combo_request = bytes.fromhex('7300000022') + int(switch_id).to_bytes(4,'big') + int(seq).to_bytes(2,'big') + bytes.fromhex('007e00000000f8f010000000000000') + mesh_id + bytes.fromhex('f00000') + (1 if state else 0).to_bytes(1,'big')  + brightness.to_bytes(1,'big') + color_tone.to_bytes(1,'big') + rgb[0].to_bytes(1,'big') + rgb[1].to_bytes(1,'big') + rgb[2].to_bytes(1,'big') + ((496 + int(mesh_id[0]) + int(mesh_id[1]) + (1 if state else 0) + brightness + color_tone + sum(rgb))%256).to_bytes(1,'big') + bytes.fromhex('7e')
+        self.loop.call_soon_threadsafe(self.send_request,combo_request)
+    
+    def turn_on(self,switch_id,mesh_id,seq):
+        power_request = bytes.fromhex('730000001f') + int(switch_id).to_bytes(4,'big') + int(seq).to_bytes(2,'big') + bytes.fromhex('007e00000000f8d00d000000000000') + mesh_id + bytes.fromhex('d00000010000') + ((430 + int(mesh_id[0]) + int(mesh_id[1]))%256).to_bytes(1,'big') + bytes.fromhex('7e')
+        self.loop.call_soon_threadsafe(self.send_request,power_request)
+
+    def turn_off(self,switch_id,mesh_id,seq):
+        power_request = bytes.fromhex('730000001f') + int(switch_id).to_bytes(4,'big') + int(seq).to_bytes(2,'big') + bytes.fromhex('007e00000000f8d00d000000000000') + mesh_id + bytes.fromhex('d00000000000') + ((429 + int(mesh_id[0]) + int(mesh_id[1]))%256).to_bytes(1,'big') + bytes.fromhex('7e')
+        self.loop.call_soon_threadsafe(self.send_request,power_request)
+
+    def set_color_temp(self,color_temp,switch_id,mesh_id,seq):
+        color_temp_request = bytes.fromhex('730000001e') + int(switch_id).to_bytes(4,'big') + int(seq).to_bytes(2,'big') + bytes.fromhex('007e00000000f8e20c000000000000') + mesh_id + bytes.fromhex('e2000005') + color_temp.to_bytes(1,'big') + ((469 + int(mesh_id[0]) + int(mesh_id[1]) + color_temp)%256).to_bytes(1,'big') + bytes.fromhex('7e')
+        self.loop.call_soon_threadsafe(self.send_request,color_temp_request)
+
 
 class CyncSwitch:
     def __init__(self, device_id, switch_info, hub) -> None:
@@ -790,8 +592,7 @@ class CyncSwitch:
         ][0]
         self.name = switch_info.get('name', 'unknown')
         self.home_name = switch_info.get('home_name', 'unknown')
-        self.room_name = switch_info.get('room_name', 'Unknown Room')
-        self.mesh_id = switch_info.get('mesh_id', 0)
+        self.mesh_id = switch_info.get('mesh_id', 0).to_bytes(2,'little')
         self.power_state = False
         self.brightness = 0
         self.color_temp_kelvin = 0
@@ -805,11 +606,8 @@ class CyncSwitch:
         self.support_color_temp = switch_info.get('COLORTEMP', False)
         self.support_rgb = switch_info.get('RGB', False)
         self.support_effects = True  # Assuming effects are supported
-        self.plug = switch_info.get('PLUG', False)
-        self.fan = switch_info.get('FAN', False)
-        self.elements = switch_info.get('MULTIELEMENT', 1)
-        self._command_timeout = 1
-        self._command_retry_time = 10
+        self._command_timeout = 0.5
+        self._command_retry_time = 5
 
     def register(self, update_callback) -> None:
         """Register callback, called when switch changes state."""
@@ -829,250 +627,96 @@ class CyncSwitch:
         """Return minimum supported color temperature in Kelvin."""
         return 2000  # Adjust according to your devices' specifications
 
-    async def turn_on(
-        self,
-        brightness: Optional[int] = None,
-        color_temp_kelvin: Optional[int] = None,
-        rgb_color: Optional[Tuple[int, int, int]] = None,
-        effect: Optional[str] = None,
-        transition: Optional[float] = None,
-        **kwargs: Any
-    ) -> None:
-        """Turn on the light with optional parameters without waiting for other devices."""
-        _LOGGER.debug(
-            f"Switch '{self.name}': Sending turn_on command with brightness={brightness}, "
-            f"color_temp_kelvin={color_temp_kelvin}, rgb_color={rgb_color}"
-        )
-        attempts = 0
-        max_attempts = int(self._command_retry_time / self._command_timeout)
-        success = False
-
-        while not success and attempts < max_attempts:
-            try:
-                # Update controllers before each attempt
-                self.update_controllers()
-                controller = self.controllers[attempts % len(self.controllers)] if self.controllers else self.default_controller
-
-                # Send Set Status (On)
-                seq_status = await self.hub.get_seq_num()
-                status_packet = self.hub.create_set_status_packet(
-                    controller_id=controller,
-                    seq=seq_status,
-                    device_index=self.mesh_id,
-                    status=1  # 1 to turn on
-                )
-
-                # Define acknowledgment callback
-                async def on_ack_status(seq):
-                    _LOGGER.debug(f"Switch '{self.name}': Acknowledgment received for Set Status (On), seq={seq}")
-
-                # Enqueue the Set Status packet
-                await self.hub.send_request(status_packet, callback=on_ack_status, mesh_id=self.mesh_id)
-
-                # Initialize a list to track pending sequence numbers
-                pending_seqs = [seq_status]
-
-                # Handle Brightness
-                if self.support_brightness and brightness is not None:
-                    brightness_value = max(0, min(100, round((brightness / 255) * 100)))
-                    seq_brightness = await self.hub.get_seq_num()
-                    brightness_packet = self.hub.create_set_brightness_packet(
-                        controller_id=controller,
-                        seq=seq_brightness,
-                        device_index=self.mesh_id,
-                        brightness=brightness_value
-                    )
-
-                    async def on_ack_brightness(seq):
-                        _LOGGER.debug(f"Switch '{self.name}': Acknowledgment received for Set Brightness, seq={seq}")
-
-                    await self.hub.send_request(brightness_packet, callback=on_ack_brightness, mesh_id=self.mesh_id)
-                    pending_seqs.append(seq_brightness)
-
-                # Handle Color Temperature
-                if self.support_color_temp and color_temp_kelvin is not None:
-                    # Scale color temperature to 0-100%
-                    color_temp_scaled = max(0, min(100, round(
-                        ((color_temp_kelvin - self.min_color_temp_kelvin) /
-                         (self.max_color_temp_kelvin - self.min_color_temp_kelvin)) * 100
-                    )))
-                    seq_ct = await self.hub.get_seq_num()
-                    ct_packet = self.hub.create_set_ct_packet(
-                        controller_id=controller,
-                        seq=seq_ct,
-                        device_index=self.mesh_id,
-                        ct=color_temp_scaled
-                    )
-
-                    async def on_ack_ct(seq):
-                        _LOGGER.debug(f"Switch '{self.name}': Acknowledgment received for Set Color Temp, seq={seq}")
-
-                    await self.hub.send_request(ct_packet, callback=on_ack_ct, mesh_id=self.mesh_id)
-                    pending_seqs.append(seq_ct)
-
-                # Handle RGB Color
-                if self.support_rgb and rgb_color is not None:
-                    r, g, b = [max(0, min(255, val)) for val in rgb_color]
-                    seq_rgb = await self.hub.get_seq_num()
-                    rgb_packet = self.hub.create_set_rgb_packet(
-                        controller_id=controller,
-                        seq=seq_rgb,
-                        device_index=self.mesh_id,
-                        r=r,
-                        g=g,
-                        b=b
-                    )
-
-                    async def on_ack_rgb(seq):
-                        _LOGGER.debug(f"Switch '{self.name}': Acknowledgment received for Set RGB, seq={seq}")
-
-                    await self.hub.send_request(rgb_packet, callback=on_ack_rgb, mesh_id=self.mesh_id)
-                    pending_seqs.append(seq_rgb)
-
-                # Wait for acknowledgments within the timeout period
-                await asyncio.sleep(self._command_timeout)
-
-                # Check if all sequences have been acknowledged
-                async with self.hub.pending_commands_lock:
-                    pending = any(seq in self.hub.pending_commands for seq in pending_seqs)
-
-                if not pending:
-                    _LOGGER.info(f"Switch '{self.name}': Successfully turned on the light.")
-                    success = True
+    async def turn_on(self, attr_rgb, attr_br, attr_ct) -> None:
+            """Turn on the light."""
+            attempts = 0
+            update_received = False
+            while not update_received and attempts < int(self._command_retry_time/self._command_timeout):
+                seq = str(self.hub.get_seq_num())
+                if len(self.controllers) > 0:
+                    controller = self.controllers[attempts%len(self.controllers)]
                 else:
-                    attempts += 1
-                    _LOGGER.warning(
-                        f"Switch '{self.name}': Attempt {attempts} to turn on the light failed. Retrying..."
-                    )
-
-            except Exception as e:
-                _LOGGER.error(f"Switch '{self.name}': Exception during turn_on: {e}", exc_info=True)
-                attempts += 1
+                    controller = self.default_controller
+                if attr_rgb is not None and attr_br is not None:
+                    if math.isclose(attr_br, max([self.rgb['r'],self.rgb['g'],self.rgb['b']])*self.brightness/100, abs_tol = 2):
+                        self.hub.combo_control(True, self.brightness, 254, attr_rgb, controller, self.mesh_id, seq)
+                    else:
+                        self.hub.combo_control(True, round(attr_br*100/255), 255, [255,255,255], controller, self.mesh_id, seq)
+                elif attr_rgb is None and attr_ct is None and attr_br is not None:
+                    self.hub.combo_control(True, round(attr_br*100/255), 255, [255,255,255], controller, self.mesh_id, seq)
+                elif attr_rgb is not None and attr_br is None:
+                    self.hub.combo_control(True, self.brightness, 254, attr_rgb, controller, self.mesh_id, seq)
+                elif attr_ct is not None:
+                    ct = round(100*(self.max_mireds - attr_ct)/(self.max_mireds - self.min_mireds))
+                    self.hub.turn_on(controller, self.mesh_id, seq)
+                    self.hub.set_color_temp(ct, controller, self.mesh_id, seq)
+                else:
+                    self.hub.turn_on(controller, self.mesh_id, seq)
+                self.hub.pending_commands[seq] = self.command_received
                 await asyncio.sleep(self._command_timeout)
+                if self.hub.pending_commands.get(seq, None) is not None:
+                    self.hub.pending_commands.pop(seq)
+                    attempts += 1
+                else:
+                    update_received = True
 
-        if not success:
-            _LOGGER.error(f"Switch '{self.name}': Failed to turn on the light after {attempts} attempts.")
 
     async def turn_off(self, **kwargs: Any) -> None:
         """Turn off the light."""
-        _LOGGER.debug(f"Switch '{self.name}': Sending turn_off command.")
         attempts = 0
-        max_attempts = int(self._command_retry_time / self._command_timeout)
-        success = False
-
-        while not success and attempts < max_attempts:
-            try:
-                # Acquire a unique sequence number
-                seq_status = await self.hub.get_seq_num()
-                self.update_controllers()
-                controller = self.controllers[attempts % len(self.controllers)] if self.controllers else self.default_controller
-
-                # Send Set Status (Off)
-                status_packet = self.hub.create_set_status_packet(
-                    controller_id=controller,
-                    seq=seq_status,
-                    device_index=self.mesh_id,
-                    status=0  # 0 to turn off
-                )
-
-                # Define acknowledgment callback
-                async def on_ack_status_off(seq_num):
-                    _LOGGER.debug(f"Switch '{self.name}': Acknowledgment received for Set Status (Off), seq={seq_num}")
-
-                # Send the Set Status packet
-                await self.hub.send_request(status_packet, callback=on_ack_status_off, mesh_id=self.mesh_id)
-
-                # Initialize a list to track pending sequence numbers
-                pending_seqs = [seq_status]
-
-                # Wait for acknowledgment within the timeout period
-                await asyncio.sleep(self._command_timeout)
-
-                # Check if the sequence has been acknowledged
-                async with self.hub.pending_commands_lock:
-                    pending = any(seq in self.hub.pending_commands for seq in pending_seqs)
-
-                if not pending:
-                    _LOGGER.info(f"Switch '{self.name}': Successfully turned off the light.")
-                    success = True
-                else:
-                    attempts += 1
-                    _LOGGER.warning(
-                        f"Switch '{self.name}': Attempt {attempts} to turn off the light failed. Retrying..."
-                    )
-
-            except Exception as e:
-                _LOGGER.error(f"Switch '{self.name}': Exception during turn_off: {e}", exc_info=True)
+        update_received = False
+        while not update_received and attempts < int(self._command_retry_time/self._command_timeout):
+            seq = str(self.hub.get_seq_num())
+            if len(self.controllers) > 0:
+                controller = self.controllers[attempts%len(self.controllers)]
+            else:
+                controller = self.default_controller
+            self.hub.turn_off(controller, self.mesh_id, seq)
+            self.hub.pending_commands[seq] = self.command_received
+            await asyncio.sleep(self._command_timout)
+            if self.hub.pending_commands.get(seq, None) is not None:
+                self.hub.pending_commands.pop(seq)
                 attempts += 1
-                await asyncio.sleep(self._command_timeout)
+            else:
+                update_received = True
 
-        if not success:
-            _LOGGER.error(f"Switch '{self.name}': Failed to turn off the light after {attempts} attempts.")
-
-    def command_received(self, seq: int):
+    def command_received(self, seq):
         """Handle command acknowledgment from the Cync server."""
         _LOGGER.debug(f"Command received for sequence {seq}")
 
-    def update_switch(self, state: bool, brightness: int, color_temp: Optional[int] = None, rgb: Optional[Dict[str, int]] = None):
-        """Update the state of the switch as updates are received from the Cync server."""
-        updated = False
-
-        if color_temp is not None:
-            # Clamp color temperature within supported range
-            self.color_temp_kelvin = max(self.min_color_temp_kelvin, min(self.max_color_temp_kelvin, color_temp))
-            updated = True
-
-        if rgb is not None:
-            # Clamp RGB values
-            self.rgb = {
-                'r': max(0, min(255, rgb.get('r', self.rgb['r']))),
-                'g': max(0, min(255, rgb.get('g', self.rgb['g']))),
-                'b': max(0, min(255, rgb.get('b', self.rgb['b'])))
-            }
-            updated = True
-
-        if brightness is not None:
-            # Clamp brightness within 0-100%
-            self.brightness = max(0, min(100, brightness))
-            updated = True
-
-        # Update power state only if it has changed
-        if state != self.power_state:
+    def update_switch(self,state,brightness,color_temp,rgb):
+        """Update the state of the switch as updates are received from the Cync server"""
+        self.update_received = True
+        if self.power_state != state or self.brightness != brightness or self.color_temp != color_temp or self.rgb != rgb:
             self.power_state = state
-            updated = True
-
-        if updated:
-            _LOGGER.debug(f"Device '{self.name}' updated: State={self.power_state}, Brightness={self.brightness}, "
-                        f"Color Temp={self.color_temp_kelvin}, RGB={self.rgb}")
+            self.brightness = brightness if self.support_brightness and state else 100 if state else 0
+            self.color_temp = color_temp 
+            self.rgb = rgb
             self.publish_update()
-
+    
     def update_controllers(self):
-        """Update the list of responsive, Wi-Fi connected controller devices."""
-        connected_devices = self.hub.connected_devices.get(self.home_id, [])
+        """Update the list of responsive, Wi-Fi connected controller devices"""
+        connected_devices = self.hub.connected_devices[self.home_id]
         controllers = []
-        if connected_devices:
-            if int(self.switch_id) > 0 and self.device_id in connected_devices:
-                controllers.append(int(self.switch_id))
-            others_available = [
-                int(self.hub.cync_switches[device_id].switch_id)
-                for device_id in connected_devices
-                if device_id != self.device_id and int(self.hub.cync_switches[device_id].switch_id) not in controllers
-            ]
-            # Remove duplicates while preserving order
-            unique_others = []
-            seen = set()
-            for ctrl in others_available:
-                if ctrl not in seen:
-                    unique_others.append(ctrl)
-                    seen.add(ctrl)
-            self.controllers = controllers + unique_others
+        if len(connected_devices) > 0:
+            if int(self.switch_id) > 0:
+                if self.device_id in connected_devices: 
+                    #if this device is connected, make this the first available controller
+                    controllers.append(self.switch_id)
+            if self.room:
+                controllers = controllers + [self.hub.cync_switches[device_id].switch_id for device_id in self.room.all_room_switches if device_id in connected_devices and device_id != self.device_id]
+            others_available = [self.hub.cync_switches[device_id].switch_id for device_id in connected_devices]
+            for controller in controllers:
+                if controller in others_available:
+                    others_available.remove(controller)
+            self.controllers = controllers + others_available
         else:
             self.controllers = [self.default_controller]
 
     def publish_update(self):
         """Publish the update to Home Assistant."""
         if self._update_callback:
-            self.hub.hass.loop.call_soon_threadsafe(self._update_callback)
+            self._update_callback()
 
 class CyncUserData:
     """Class to handle user authentication and data retrieval."""
@@ -1259,13 +903,23 @@ class CyncUserData:
             ((device['deviceID'] % int(home_id)) % 1000) + ((device['deviceID'] % int(home_id)) // 1000) * 256
             for device in bulbs_array
         ) + 1
-        home_devices[home_id] = [""] * max_index
+        home_devices[home_id] = []
         home_controllers[home_id] = []
+        # Build rooms dict from groupsArray
+        for group in groups_array:
+            group_id = str(group['groupID'])
+            rooms[group_id] = {
+                'name': group.get('displayName', 'Unknown')
+            }
         for device in bulbs_array:
             device_type = device['deviceType']
             device_id = str(device['deviceID'])
             current_index = ((device['deviceID'] % int(home_id)) % 1000) + ((device['deviceID'] % int(home_id)) // 1000) * 256
             home_devices[home_id][current_index] = device_id
+            home_devices[home_id].append(device_id)
+            # Get the group ID (room ID) from device
+            group_id = str(device.get('groupID', ''))
+            room = rooms.get(group_id, {'displayName': 'Unknown'})
 
             devices[device_id] = {
                 'name': device.get('displayName', 'Unknown'),
@@ -1275,16 +929,12 @@ class CyncUserData:
                 'BRIGHTNESS': device_type in Capabilities["BRIGHTNESS"],
                 "COLORTEMP": device_type in Capabilities["COLORTEMP"],
                 "RGB": device_type in Capabilities["RGB"],
-                "MOTION": device_type in Capabilities["MOTION"],
                 "AMBIENT_LIGHT": device_type in Capabilities["AMBIENT_LIGHT"],
                 "WIFICONTROL": device_type in Capabilities["WIFICONTROL"],
-                "PLUG": device_type in Capabilities["PLUG"],
-                "FAN": device_type in Capabilities["FAN"],
                 'home_name': home.get('name', 'Unknown'),
+                'room': '',
                 'room_name': room.get('displayName', 'Unknown'),
             }
-            if str(device_type) in Capabilities['MULTIELEMENT'] and current_index < 256:
-                devices[device_id]['MULTIELEMENT'] = Capabilities['MULTIELEMENT'][str(device_type)]
             if devices[device_id].get('WIFICONTROL', False) and device.get('switchID', 0) > 0:
                 switch_id_str = str(device['switchID'])
                 switchID_to_homeID[switch_id_str] = home_id
