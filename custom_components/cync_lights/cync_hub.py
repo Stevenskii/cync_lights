@@ -116,7 +116,7 @@ class CyncHub:
         self.ssl_port = data.get("sslport", SSL_PORT)
         self.login_code = bytearray(data['cync_credentials'])
         self.use_ssl = True
-        self.ssl_context = None        
+        self.ssl_context = None
         self.reader, self.writer, self.logged_in, self.shutting_down = None, None, False, False
         self.home_devices = data['cync_config']['home_devices']
         self.home_controllers = data['cync_config']['home_controllers']
@@ -140,7 +140,7 @@ class CyncHub:
         self.send_task = self.hass.loop.create_task(self.packet_sender())
 
         self.buffer = b''  # Buffer for reading TCP data
-        
+
         self.effect_mapping = self.parse_light_shows(data['cync_config'])  # Re-added light show parsing
 
         self.hass.loop.create_task(self.connect())
@@ -174,7 +174,7 @@ class CyncHub:
                 seq = self.get_seq_num()
                 state_request = bytes.fromhex('7300000018') + int(controller).to_bytes(4,'big') + seq.to_bytes(2,'big') + bytes.fromhex('007e00000000f85206000000ffff0000567e')
                 self.loop.call_soon_threadsafe(self._send_request,state_request)
-            
+
     async def connect(self):
         """
         Establish TCP connection and authenticate, with retries and task management.
@@ -277,47 +277,124 @@ class CyncHub:
                     packet_type = int(data[0])
                     packet_length = struct.unpack(">I", data[1:5])[0]
                     packet = data[5:packet_length+5]
-                try:
-                    self.switch_data = {}
-                    # Parse packet data
-                    parsed = {}
-                    if packet_length == len(packet):
-                        if packet_type == PACKET_TYPE_REQUEST: #115
-                            #Switch ID 0-3
-                            parsed['switch_id'] = struct.unpack(">I", packet[0:4])[0]
-                            switch_id = parsed['switch_id']
-                            home_id = self.switchID_to_homeID[switch_id]
-                            # Ensure self.switch_data has a structure for this switch_id
-                            if switch_id not in self.switch_data:
-                                self.switch_data[switch_id] = {'devices': []}
-                            #Response ID 4-5
-                            parsed['response_id'] = struct.unpack(">H", packet[4:6])[0]
-                            response_packet = bytes.fromhex('7300000007') + int(switch_id).to_bytes(4,'big') + response_id.to_bytes(2,'big') + bytes.fromhex('00')
-                            self.loop.call_soon_threadsafe(self._send_request, response_packet)
-                
-                            #Command ID
-                            parsed['command_id'] = int(packet_data[13])
-                            
-                            #State Update Packet
-                            if len(packet_data) > 51 and parsed['command_id'] == 82:
-                                self._add_connected_devices(switch_id, home_id)
-                                packet = packet_data[22: ]
-                                self.switch_data[switch_id] = {'devices': []}
-                                
-                                while len(packet) > 24:
+                    try:
+                        self.switch_data = {}
+                        # Parse packet data
+                        parsed = {}
+                        if packet_length == len(packet):
+                            if packet_type == PACKET_TYPE_REQUEST: #115
+                                #Switch ID 0-3
+                                parsed['switch_id'] = struct.unpack(">I", packet[0:4])[0]
+                                switch_id = parsed['switch_id']
+                                home_id = self.switchID_to_homeID[switch_id]
+                                # Ensure self.switch_data has a structure for this switch_id
+                                if switch_id not in self.switch_data:
+                                    self.switch_data[switch_id] = {'devices': []}
+                                #Response ID 4-5
+                                parsed['response_id'] = struct.unpack(">H", packet[4:6])[0]
+                                response_packet = bytes.fromhex('7300000007') + int(switch_id).to_bytes(4,'big') + response_id.to_bytes(2,'big') + bytes.fromhex('00')
+                                self.loop.call_soon_threadsafe(self._send_request, response_packet)
+    
+                                #Command ID
+                                parsed['command_id'] = int(packet[13])
+    
+                                #State Update Packet
+                                if len(packet) > 51 and parsed['command_id'] == 82:
+                                    self._add_connected_devices(switch_id, home_id)
+                                    packet = packet[22: ]
+                                    self.switch_data[switch_id] = {'devices': []}
+    
+                                    while len(packet) > 24:
+                                        device_data = {
+                                            'deviceID': self.home_devices[home_id][int(packet[21])],
+                                            'power_state': int(packet[8]) > 0,
+                                            'brightness': int(packet[12]) if int(packet[8]) > 0 else 0,
+                                            'color_temp_kelvin': 2000 + ((7000 - 2000) * (int(packet[16]) / 255)),
+                                            'rgb': {
+                                                'r': packet[20],
+                                                'g': packet[21],
+                                                'b': packet[22],
+                                                'active': int(packet[16]) == 254
+                                                }
+                                        }
+                                        # Add or update the device in `self.switch_data[switch_id]['devices']`
+                                        self._update_device_data(switch_id, device_data)
+                                        if deviceID in self.switch_data:
+                                            self.update_switch(
+                                                switch_id=switch_id,
+                                                device_id=deviceID,
+                                                state=self.switch_data[switch_id]['devices'][deviceID].get('power_state'),
+                                                brightness=self.switch_data[switch_id]['devices'][deviceID].get('brightness'),
+                                                color_temp=self.switch_data[switch_id]['devices'][deviceID].get('color_temp_kelvin'),
+                                                rgb=self.switch_data[switch_id]['devices'][deviceID].get('rgb')
+                                            )
+                                        packet = packet[24:]
+    
+                                #State and Brightness Packet
+                                if len(packet) >= 33 and parsed['command_id'] == 219:
+                                    #parse state and brightness TODO FIND OUT IF CT AND RGB
                                     device_data = {
-                                        'deviceID': self.home_devices[home_id][int(packet[21])],
-                                        'power_state': int(packet[8]) > 0
-                                        'brightness' = int(packet[12]) if int(packet[8]) > 0 else 0
-                                        'color_temp_kelvin': 2000 + ((7000 - 2000) * (int(packet[16]) / 255)),
-                                        'rgb': {
-                                            'r': packet[20],
-                                            'g': packet[21],
-                                            'b': packet[22],
-                                            'active': int(packet[16]) == 254
-                                            }
+                                            'deviceID': self.home_devices[home_id][int(packet[21])],
+                                            'power_state': int(packet[27]) > 0,
+                                            'brightness': int(packet[28]) if int(packet[27]) > 0 else 0
                                     }
-                                    # Add or update the device in `self.switch_data[switch_id]['devices']`
+                                    self._update_device_data(switch_id, device_data)
+                                    if deviceID in self.switch_data:
+                                            self.update_switch(
+                                                switch_id=switch_id,
+                                                device_id=deviceID,
+                                                state=self.switch_data[switch_id]['devices'][deviceID].get('power_state'),
+                                                brightness=self.switch_data[switch_id]['devices'][deviceID].get('brightness'),
+                                                color_temp=self.switch_data[switch_id]['devices'][deviceID].get('color_temp_kelvin'),
+                                                rgb=self.switch_data[switch_id]['devices'][deviceID].get('rgb')
+                                            )
+    
+                                    _LOGGER.debug(f"Packet data ({len(packet)} bytes): {hexdump(packet)}")
+    
+                            elif packet_type == PACKET_TYPE_131:
+                            #Process 131 type instead of 115, basically a duplicate section
+                                parsed['switch_id'] = struct.unpack(">I", packet[0:4])[0]
+                                switch_id = parsed['switch_id']
+                                home_id = self.switchID_to_homeID[switch_id]
+                                if len(packet) >= 33 and parsed['command_id'] == 219:
+                                #parse state and brightness change packet
+                                    device_data = {
+                                            'deviceID': self.home_devices[home_id][int(packet[21])],
+                                            'power_state': int(packet[27]) > 0,
+                                            'brightness': int(packet[28]) if int(packet[27]) > 0 else 0
+                                    }
+                                    self._update_device_data(switch_id, device_data)
+                                if deviceID in self.switch_data:
+                                    self.update_switch(
+                                        switch_id=switch_id,
+                                        device_id=deviceID,
+                                        state=self.switch_data[switch_id]['devices'][deviceID].get('power_state'),
+                                        brightness=self.switch_data[switch_id]['devices'][deviceID].get('brightness'),
+                                        color_temp=self.switch_data[switch_id]['devices'][deviceID].get('color_temp_kelvin'),
+                                        rgb=self.switch_data[switch_id]['devices'][deviceID].get('rgb')
+                                    )
+    
+                                _LOGGER.debug(f"Packet data ({len(packet)} bytes): {hexdump(packet)}")
+    
+                            elif packet_type == PACKET_TYPE_INITIAL and int(packet[4]) == 1 and int(packet[5]) == 1 and int(packet[6]) == 1: #67
+                            #Process initial state packet
+                                parsed['switch_id'] = struct.unpack(">I", packet[0:4])[0]
+                                switch_id = parsed['switch_id']
+                                home_id = self.switchID_to_homeID[switch_id]
+                                packet = packet[7: ]
+                                while len(packet) >= 19:
+                                    device_data = {
+                                            'deviceID': self.home_devices[home_id][int(packet[3])],
+                                            'power_state': int(packet[4]) > 0,
+                                            'brightness': int(packet[5]) if int(packet[4]) > 0 else 0,
+                                            'color_temp_kelvin': 2000 + ((7000 - 2000) * (int(packet[6]) / 255)),
+                                            'rgb': {
+                                                'r': packet[7],
+                                                'g': packet[8],
+                                                'b': packet[9],
+                                                'active': int(packet[6]) == 254
+                                                }
+                                        }
                                     self._update_device_data(switch_id, device_data)
                                     if deviceID in self.switch_data:
                                         self.update_switch(
@@ -328,108 +405,31 @@ class CyncHub:
                                             color_temp=self.switch_data[switch_id]['devices'][deviceID].get('color_temp_kelvin'),
                                             rgb=self.switch_data[switch_id]['devices'][deviceID].get('rgb')
                                         )
-                                    packet = packet[24:]
-                
-                            #State and Brightness Packet
-                            if len(packet_data) >= 33 and parsed['command_id'] == 219:
-                                #parse state and brightness TODO FIND OUT IF CT AND RGB
-                                device_data = {
-                                        'deviceID': self.home_devices[home_id][int(packet[21])],
-                                        'power_state': int(packet[27]) > 0
-                                        'brightness' = int(packet[28]) if int(packet[27]) > 0 else 0
-                                }
+    
+                            elif packet_type == PACKET_TYPE_DEV_ACK:
+                                parsed['switch_id'] = struct.unpack(">I", packet[0:4])[0]
+                                switch_id = parsed['switch_id']
+                                home_id = self.switchID_to_homeID[switch_id]
+                                device_data = {}
                                 self._update_device_data(switch_id, device_data)
-                                if deviceID in self.switch_data:
-                                        self.update_switch(
-                                            switch_id=switch_id,
-                                            device_id=deviceID,
-                                            state=self.switch_data[switch_id]['devices'][deviceID].get('power_state'),
-                                            brightness=self.switch_data[switch_id]['devices'][deviceID].get('brightness'),
-                                            color_temp=self.switch_data[switch_id]['devices'][deviceID].get('color_temp_kelvin'),
-                                            rgb=self.switch_data[switch_id]['devices'][deviceID].get('rgb')
-                                        )
-                                        
-                                _LOGGER.debug(f"Packet data ({len(packet_data)} bytes): {hexdump(packet_data)}")
-                            
-                        elif packet_type == PACKET_TYPE_131
-                        #Process 131 type instead of 115, basically a duplicate section
-                            parsed['switch_id'] = struct.unpack(">I", packet[0:4])[0]
-                            switch_id = parsed['switch_id']
-                            home_id = self.switchID_to_homeID[switch_id]
-                            if len(packet_data) >= 33 and parsed['command_id'] == 219:
-                            #parse state and brightness change packet
-                            device_data = {
-                                    'deviceID': self.home_devices[home_id][int(packet[21])],
-                                    'power_state': int(packet[27]) > 0
-                                    'brightness' = int(packet[28]) if int(packet[27]) > 0 else 0
-                            }
-                            self._update_device_data(switch_id, device_data)
-                            if deviceID in self.switch_data:
-                                    self.update_switch(
-                                        switch_id=switch_id,
-                                        device_id=deviceID,
-                                        state=self.switch_data[switch_id]['devices'][deviceID].get('power_state'),
-                                        brightness=self.switch_data[switch_id]['devices'][deviceID].get('brightness'),
-                                        color_temp=self.switch_data[switch_id]['devices'][deviceID].get('color_temp_kelvin'),
-                                        rgb=self.switch_data[switch_id]['devices'][deviceID].get('rgb')
-                                    )
-                                    
-                            _LOGGER.debug(f"Packet data ({len(packet_data)} bytes): {hexdump(packet_data)}")
-                                
-                        elif packet_type == PACKET_TYPE_INITIAL and int(packet_data[4]) == 1 and int(packet_data[5]) == 1 and int(packet_data[6]) == 1: #67
-                        #Process initial state packet
-                            parsed['switch_id'] = struct.unpack(">I", packet[0:4])[0]
-                            switch_id = parsed['switch_id']
-                            home_id = self.switchID_to_homeID[switch_id]
-                            packet = packet_data[7: ]
-                            while len(packet) >= 19:
-                                device_data = {
-                                        'deviceID': self.home_devices[home_id][int(packet[3])],
-                                        'power_state': int(packet[4]) > 0
-                                        'brightness' = int(packet[5]) if int(packet[4]) > 0 else 0
-                                        'color_temp_kelvin': 2000 + ((7000 - 2000) * (int(packet[6]) / 255)),
-                                        'rgb': {
-                                            'r': packet[7],
-                                            'g': packet[8],
-                                            'b': packet[9],
-                                            'active': int(packet[6]) == 254
-                                            }
-                                    }
-                                self._update_device_data(switch_id, device_data)
-                                if deviceID in self.switch_data:
-                                    self.update_switch(
-                                        switch_id=switch_id,
-                                        device_id=deviceID,
-                                        state=self.switch_data[switch_id]['devices'][deviceID].get('power_state'),
-                                        brightness=self.switch_data[switch_id]['devices'][deviceID].get('brightness'),
-                                        color_temp=self.switch_data[switch_id]['devices'][deviceID].get('color_temp_kelvin'),
-                                        rgb=self.switch_data[switch_id]['devices'][deviceID].get('rgb')
-                                    )
-                
-                        elif packet_type == PACKET_TYPE_DEV_ACK:
-                            parsed['switch_id'] = struct.unpack(">I", packet[0:4])[0]
-                            switch_id = parsed['switch_id']
-                            home_id = self.switchID_to_homeID[switch_id]
-                            device_data = {}
-                            self._update_device_data(switch_id, device_data)
-                        
-                        elif packet_type == PACKET_TYPE_ACK:
-                            seq = str(struct.unpack(">H", packet[9:11])[0])
-                            command_received = self.pending_commands.get(seq,None)
+    
+                            elif packet_type == PACKET_TYPE_ACK:
+                                seq = str(struct.unpack(">H", packet[9:11])[0])
+                                command_received = self.pending_commands.get(seq,None)
                                 if command_received is not None:
                                     command_received(seq)
-            
-            
-        except LostConnection:
-            _LOGGER.warning("Lost connection to the server. Attempting to reconnect...")
-            await self.disconnect()
-            await asyncio.sleep(5)  # Wait before reconnecting
-            await self.connect()  # Re-establish the connection
-            break
-        except Exception as e:
-            _LOGGER.error(f"Error while reading TCP messages: {e}")
-            _LOGGER.debug("Traceback:", exc_info=True)
-            await asyncio.sleep(5)  # Retry after delay
+
+
+                    except LostConnection:
+                        _LOGGER.warning("Lost connection to the server. Attempting to reconnect...")
+                        await self.disconnect()
+                        await asyncio.sleep(5)  # Wait before reconnecting
+                        await self.connect()  # Re-establish the connection
+                        break
+                    except Exception as e:
+                        _LOGGER.error(f"Error while reading TCP messages: {e}")
+                        _LOGGER.debug("Traceback:", exc_info=True)
+                        await asyncio.sleep(5)  # Retry after delay
 
     # Helper function to add or update device data
     def _update_device_data(self, switch_id, new_device_data):
@@ -448,36 +448,36 @@ class CyncHub:
 
     def update_switch(self, switch_id, device_id, state, brightness, color_temp: Optional[int] = None, rgb: Optional[Dict[str, int]] = None):
         """Update the state of the device in switch_data as updates are received from the Cync server."""
-    
+
         # Find the switch and device entry in `self.switch_data`
         switch_data = self.switch_data.get(switch_id)
         if not switch_data:
             _LOGGER.warning(f"Switch ID {switch_id} not found in switch_data.")
             return
-    
+
         # Locate the specific device within the switch_data
         device_data = next((device for device in switch_data['devices'] if device['deviceID'] == device_id), None)
         if not device_data:
             _LOGGER.warning(f"Device ID {device_id} not found under switch ID {switch_id}.")
             return
-    
+
         # Update the device data as required
         updated = False
         if device_data['power_state'] != state:
             device_data['power_state'] = state
             updated = True
-    
+
         if brightness is not None and device_data['brightness'] != brightness:
             device_data['brightness'] = brightness
             updated = True
-    
+
         if color_temp is not None:
             # Clamp color temperature within supported range
             color_temp_kelvin = max(self.min_color_temp_kelvin, min(self.max_color_temp_kelvin, color_temp))
             if device_data['color_temp_kelvin'] != color_temp_kelvin:
                 device_data['color_temp_kelvin'] = color_temp_kelvin
                 updated = True
-    
+
         if rgb is not None:
             # Clamp RGB values within 0-255
             rgb_clamped = {
@@ -488,7 +488,7 @@ class CyncHub:
             if device_data['rgb'] != rgb_clamped:
                 device_data['rgb'] = rgb_clamped
                 updated = True
-    
+
         if updated:
             _LOGGER.debug(
                 f"Device '{device_id}' updated under switch '{switch_id}': State={device_data['power_state']}, "
@@ -496,7 +496,7 @@ class CyncHub:
                 f"RGB={device_data['rgb']}"
             )
             self.publish_update(switch_id, device_id)
-            
+
     def publish_update(self, switch_id, device_id):
         """Publish the update to Home Assistant."""
         if self._update_callback:
@@ -508,7 +508,7 @@ class CyncHub:
             self.writer.write(bytes.fromhex('d300000000'))
             await self.writer.drain()
         raise ShuttingDown
-    
+
     def _send_request(self, request):
         async def send():
             self.writer.write(request)
@@ -531,7 +531,7 @@ class CyncHub:
                         self.loop.call_soon_threadsafe(self._send_request, ping)
                         await asyncio.sleep(0.15)
                 await asyncio.sleep(2)
-                attempts += 1            
+                attempts += 1
             for dev in self.cync_switches.values():
                 dev.update_controllers()
             self.connected_devices_updated = True
@@ -567,7 +567,7 @@ class CyncHub:
     def combo_control(self,state,brightness,color_tone,rgb,switch_id,mesh_id,seq):
         combo_request = bytes.fromhex('7300000022') + int(switch_id).to_bytes(4,'big') + int(seq).to_bytes(2,'big') + bytes.fromhex('007e00000000f8f010000000000000') + mesh_id + bytes.fromhex('f00000') + (1 if state else 0).to_bytes(1,'big')  + brightness.to_bytes(1,'big') + color_tone.to_bytes(1,'big') + rgb[0].to_bytes(1,'big') + rgb[1].to_bytes(1,'big') + rgb[2].to_bytes(1,'big') + ((496 + int(mesh_id[0]) + int(mesh_id[1]) + (1 if state else 0) + brightness + color_tone + sum(rgb))%256).to_bytes(1,'big') + bytes.fromhex('7e')
         self.loop.call_soon_threadsafe(self.send_request,combo_request)
-    
+
     def turn_on(self,switch_id,mesh_id,seq):
         power_request = bytes.fromhex('730000001f') + int(switch_id).to_bytes(4,'big') + int(seq).to_bytes(2,'big') + bytes.fromhex('007e00000000f8d00d000000000000') + mesh_id + bytes.fromhex('d00000010000') + ((430 + int(mesh_id[0]) + int(mesh_id[1]))%256).to_bytes(1,'big') + bytes.fromhex('7e')
         self.loop.call_soon_threadsafe(self.send_request,power_request)
@@ -690,17 +690,17 @@ class CyncSwitch:
         if self.power_state != state or self.brightness != brightness or self.color_temp != color_temp or self.rgb != rgb:
             self.power_state = state
             self.brightness = brightness if self.support_brightness and state else 100 if state else 0
-            self.color_temp = color_temp 
+            self.color_temp = color_temp
             self.rgb = rgb
             self.publish_update()
-    
+
     def update_controllers(self):
         """Update the list of responsive, Wi-Fi connected controller devices"""
         connected_devices = self.hub.connected_devices[self.home_id]
         controllers = []
         if len(connected_devices) > 0:
             if int(self.switch_id) > 0:
-                if self.device_id in connected_devices: 
+                if self.device_id in connected_devices:
                     #if this device is connected, make this the first available controller
                     controllers.append(self.switch_id)
             if self.room:
