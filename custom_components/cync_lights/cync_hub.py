@@ -163,7 +163,7 @@ class CyncHub:
             self.seq_num = (self.seq_num + 1) % 65536
             return self.seq_num
 
-    def disconnect(self):
+    async def disconnect(self):
         self.shutting_down = True
         for home_controllers in self.home_controllers.values(): #send packets to server to generate data to be read which will initiate shutdown
             for controller in home_controllers:
