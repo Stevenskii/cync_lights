@@ -44,8 +44,6 @@ async def async_setup_entry(
     for switch_id, cync_switch in hub.cync_switches.items():
         if (
             not cync_switch._update_callback
-            and not cync_switch.plug
-            and not cync_switch.fan
             and switch_id in config_switches
         ):
             new_switches.append(CyncSwitchEntity(cync_switch))
