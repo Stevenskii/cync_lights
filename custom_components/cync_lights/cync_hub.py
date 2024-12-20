@@ -588,6 +588,7 @@ class CyncSwitch:
         ][0]
         self.name = switch_info.get('name', 'unknown')
         self.home_name = switch_info.get('home_name', 'unknown')
+        self.room_name = switch_info.get('room_name', 'unknown')
         self.mesh_id = switch_info.get('mesh_id', 0).to_bytes(2,'little')
         self.power_state = False
         self.brightness = 0
