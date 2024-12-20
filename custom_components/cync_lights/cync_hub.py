@@ -287,7 +287,7 @@ class CyncHub:
                                 if switch_id not in self.switch_data:
                                     self.switch_data[switch_id] = {'devices': []}
                                 #Response ID 4-5
-                                parsed['response_id'] = struct.unpack(">H", packet[4:6])[0]
+                                response_id = struct.unpack(">H", packet[4:6])[0]
                                 response_packet = bytes.fromhex('7300000007') + int(switch_id).to_bytes(4,'big') + response_id.to_bytes(2,'big') + bytes.fromhex('00')
                                 self.loop.call_soon_threadsafe(self._send_request, response_packet)
     
