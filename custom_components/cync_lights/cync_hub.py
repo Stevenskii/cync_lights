@@ -136,10 +136,6 @@ class CyncHub:
         self.send_queue = asyncio.Queue()
         self.seq_to_mesh_id: Dict[int, int] = {}
         self.seq_to_mesh_id_lock = asyncio.Lock()
-        # Start the packet sender task
-        self.send_task = self.hass.loop.create_task(self.packet_sender())
-
-        self.buffer = b''  # Buffer for reading TCP data
 
         self.effect_mapping = self.parse_light_shows(data['cync_config'])  # Re-added light show parsing
 
