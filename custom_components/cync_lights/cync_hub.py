@@ -167,7 +167,7 @@ class CyncHub:
         self.shutting_down = True
         for home_controllers in self.home_controllers.values(): #send packets to server to generate data to be read which will initiate shutdown
             for controller in home_controllers:
-                seq = self.get_seq_num()
+                seq = await self.get_seq_num()
                 state_request = bytes.fromhex('7300000018') + int(controller).to_bytes(4,'big') + seq.to_bytes(2,'big') + bytes.fromhex('007e00000000f85206000000ffff0000567e')
                 self.loop.call_soon_threadsafe(self._send_request,state_request)
 
@@ -522,7 +522,7 @@ class CyncHub:
             while True in [len(devices) < len(self.home_controllers[home_id]) * 0.5 for home_id,devices in self.connected_devices.items()] and attempts < 10:
                 for home_id, home_controllers in self.home_controllers.items():
                     for controller in home_controllers:
-                        seq = self.get_seq_num()
+                        seq = await self.get_seq_num()
                         ping = bytes.fromhex('a300000007') + int(controller).to_bytes(4,'big') + seq.to_bytes(2,'big') + bytes.fromhex('00')
                         self.loop.call_soon_threadsafe(self._send_request, ping)
                         await asyncio.sleep(0.15)
@@ -629,7 +629,7 @@ class CyncSwitch:
             attempts = 0
             update_received = False
             while not update_received and attempts < int(self._command_retry_time/self._command_timeout):
-                seq = str(self.hub.get_seq_num())
+                seq = str(await self.hub.get_seq_num())
                 if len(self.controllers) > 0:
                     controller = self.controllers[attempts%len(self.controllers)]
                 else:
@@ -663,7 +663,7 @@ class CyncSwitch:
         attempts = 0
         update_received = False
         while not update_received and attempts < int(self._command_retry_time/self._command_timeout):
-            seq = str(self.hub.get_seq_num())
+            seq = str(await self.hub.get_seq_num())
             if len(self.controllers) > 0:
                 controller = self.controllers[attempts%len(self.controllers)]
             else:
