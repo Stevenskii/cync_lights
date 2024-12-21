@@ -389,17 +389,17 @@ class CyncHub:
                                 if command_received is not None:
                                     command_received(seq)
 
-
-                    except LostConnection:
-                        _LOGGER.warning("Lost connection to the server. Attempting to reconnect...")
-                        await self.disconnect()
-                        await asyncio.sleep(5)  # Wait before reconnecting
-                        await self.connect()  # Re-establish the connection
-                        break
                     except Exception as e:
                         _LOGGER.error(f"Error while reading TCP messages: {e}")
                         _LOGGER.debug("Traceback:", exc_info=True)
                         await asyncio.sleep(5)  # Retry after delay
+            except LostConnection:
+                _LOGGER.warning("Lost connection to the server. Attempting to reconnect...")
+                await self.disconnect()
+                await asyncio.sleep(5)  # Wait before reconnecting
+                await self.connect()  # Re-establish the connection
+                break
+
 
     # Helper function to add or update device data
     def _update_device_data(self, switch_id, new_device_data):
