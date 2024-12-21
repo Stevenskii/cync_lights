@@ -52,7 +52,7 @@ async def async_unload_entry(
 ) -> bool:
     """Unload a config entry."""
     hub: CyncHub = hass.data[DOMAIN].pop(entry.entry_id)
-    hub.shutdown()
+    hub.disconnect()
 
     # Unload platforms
     unload_ok = True
