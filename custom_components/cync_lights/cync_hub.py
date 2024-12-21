@@ -227,15 +227,6 @@ class CyncHub:
                         _LOGGER.debug("Cync client shutting down")
                 except Exception as e:
                     _LOGGER.error(str(type(e).__name__) + ": " + str(e))
-            except Exception as e:
-                _LOGGER.error(f"Exception in connect(): {type(e).__name__}: {e}")
-                _LOGGER.debug("Traceback:", exc_info=True)
-                retry_attempts += 1
-                if retry_attempts > max_retries:
-                    _LOGGER.error("Maximum reconnection attempts reached. Giving up.")
-                    break
-                _LOGGER.info(f"Reconnecting in 15 seconds... (Attempt {retry_attempts}/{max_retries})")
-                await asyncio.sleep(15)
 
     async def _read_tcp_messages(self) -> None:
         """Continuously read and process TCP messages from the server."""
