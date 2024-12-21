@@ -257,9 +257,8 @@ class CyncHub:
                 if retry_attempts > max_retries:
                     _LOGGER.error("Maximum reconnection attempts reached. Giving up.")
                     break
-                _LOGGER.info(f"Reconnecting in {backoff} seconds... (Attempt {retry_attempts}/{max_retries})")
-                await asyncio.sleep(backoff)
-                backoff = min(backoff * 2, max_backoff)  # Exponential backoff
+                _LOGGER.info(f"Reconnecting in 15 seconds... (Attempt {retry_attempts}/{max_retries})")
+                await asyncio.sleep(15)
 
     async def _read_tcp_messages(self) -> None:
         """Continuously read and process TCP messages from the server."""
