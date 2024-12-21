@@ -36,6 +36,8 @@ async def async_setup_entry(
     # Setup SSL asynchronously (if needed)
     await hub.setup_ssl_context()
 
+    hass.async_create_task(hub.connect())
+
     # Store the hub instance in hass.data for future reference
     hass.data[DOMAIN][entry.entry_id] = hub
 
