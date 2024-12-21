@@ -209,24 +209,6 @@ class CyncHub:
                 update_state = asyncio.create_task(self._update_state(), name="Update State")
                 update_connected_devices = asyncio.create_task(self._update_connected_devices(), name="Update Connected Devices")
                 read_write_tasks = [read_tcp_messages, maintain_connection, update_state, update_connected_devices]
-                try:
-                    done, pending = await asyncio.wait(read_write_tasks, return_when=asyncio.FIRST_EXCEPTION)
-                    for task in done:
-                        name = task.get_name()
-                        exception = task.exception()
-                        try:
-                            result = task.result()
-                        except Exception as e:
-                            _LOGGER.error(str(type(e).__name__) + ": " + str(e))
-                    for task in pending:
-                        task.cancel()
-                    if not self.shutting_down:
-                        _LOGGER.error("Connection to Cync server reset, restarting in 15 seconds")
-                        await asyncio.sleep(15)
-                    else:
-                        _LOGGER.debug("Cync client shutting down")
-                except Exception as e:
-                    _LOGGER.error(str(type(e).__name__) + ": " + str(e))
 
     async def _read_tcp_messages(self) -> None:
         """Continuously read and process TCP messages from the server."""
