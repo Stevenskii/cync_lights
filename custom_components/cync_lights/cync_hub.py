@@ -216,6 +216,7 @@ class CyncHub:
             self.hass.async_create_task(self._maintain_connection(), name="Maintain Connection")
             self.hass.async_create_task(self._update_state(), name="Update State")
             self.hass.async_create_task(self._update_connected_devices(), name="Update Connected Devices")
+            return
     
         except Exception as e:
             _LOGGER.error("Exception in connect(): %s: %s", type(e).__name__, str(e))
@@ -226,138 +227,58 @@ class CyncHub:
         """Continuously read and process TCP messages from the server."""
         try:
             while not self.shutting_down:
-                    data = await self.reader.read(1000)
-                    if len(data) == 0:
-                        self.logged_in = False
-                        raise LostConnection
+                data = await self.reader.read(1000)
+                if len(data) == 0:
+                    self.logged_in = False
+                    raise LostConnection
     
-                    while len(data) >= 12:
-                        packet_type = int(data[0])
-                        packet_length = struct.unpack(">I", data[1:5])[0]
-                        packet = data[5:packet_length+5]
-                        try:
-                            self.switch_data = {}
-                            # Parse packet data
-                            parsed = {}
-                            if packet_length == len(packet):
-                                if packet_type == PACKET_TYPE_REQUEST: #115
-                                    #Switch ID 0-3
-                                    parsed['switch_id'] = struct.unpack(">I", packet[0:4])[0]
-                                    switch_id = parsed['switch_id']
-                                    home_id = self.switchID_to_homeID[switch_id]
-                                    # Ensure self.switch_data has a structure for this switch_id
-                                    if switch_id not in self.switch_data:
-                                        self.switch_data[switch_id] = {'devices': []}
-                                    #Response ID 4-5
-                                    response_id = struct.unpack(">H", packet[4:6])[0]
-                                    response_packet = bytes.fromhex('7300000007') + int(switch_id).to_bytes(4,'big') + response_id.to_bytes(2,'big') + bytes.fromhex('00')
-                                    self.hass.async_create_task(self._send_request(response_packet))
+                while len(data) >= 12:
+                    packet_type = int(data[0])
+                    packet_length = struct.unpack(">I", data[1:5])[0]
+                    packet = data[5:packet_length+5]
+                    try:
+                        self.switch_data = {}
+                        # Parse packet data
+                        parsed = {}
+                        if packet_length == len(packet):
+                            if packet_type == PACKET_TYPE_REQUEST: #115
+                                #Switch ID 0-3
+                                parsed['switch_id'] = struct.unpack(">I", packet[0:4])[0]
+                                switch_id = parsed['switch_id']
+                                home_id = self.switchID_to_homeID[switch_id]
+                                # Ensure self.switch_data has a structure for this switch_id
+                                if switch_id not in self.switch_data:
+                                    self.switch_data[switch_id] = {'devices': []}
+                                #Response ID 4-5
+                                response_id = struct.unpack(">H", packet[4:6])[0]
+                                response_packet = bytes.fromhex('7300000007') + int(switch_id).to_bytes(4,'big') + response_id.to_bytes(2,'big') + bytes.fromhex('00')
+                                self.hass.async_create_task(self._send_request(response_packet))
     
-                                    #Command ID
-                                    parsed['command_id'] = int(packet[13])
+                                #Command ID
+                                parsed['command_id'] = int(packet[13])
     
-                                    #State Update Packet
-                                    if len(packet) > 51 and parsed['command_id'] == 82:
-                                        self._add_connected_devices(switch_id, home_id)
-                                        packet = packet[22: ]
-                                        self.switch_data[switch_id] = {'devices': []}
+                                #State Update Packet
+                                if len(packet) > 51 and parsed['command_id'] == 82:
+                                    self._add_connected_devices(switch_id, home_id)
+                                    packet = packet[22: ]
+                                    self.switch_data[switch_id] = {'devices': []}
     
-                                        while len(packet) > 24:
-                                            deviceID = self.home_devices[home_id][int(packet[21])]
-                                            device_data = {
-                                                'deviceID': deviceID,
-                                                'power_state': int(packet[8]) > 0,
-                                                'brightness': int(packet[12]) if int(packet[8]) > 0 else 0,
-                                                'color_temp_kelvin': 2000 + ((7000 - 2000) * (int(packet[16]) / 255)),
-                                                'rgb': {
-                                                    'r': packet[20],
-                                                    'g': packet[21],
-                                                    'b': packet[22],
-                                                    'active': int(packet[16]) == 254
-                                                    }
-                                            }
-    
-                                            # Add or update the device in `self.switch_data[switch_id]['devices']`
-                                            self._update_device_data(switch_id, device_data)
-                                            if deviceID in self.switch_data:
-                                                self._update_switch(
-                                                    switch_id=switch_id,
-                                                    device_id=device_data['deviceID'],
-                                                    state=device_data['power_state'],
-                                                    brightness=device_data['brightness'],
-                                                    color_temp=device_data['color_temp_kelvin'],
-                                                    rgb=device_data['rgb']
-                                                )
-                                            packet = packet[24:]
-        
-                                    #State and Brightness Packet
-                                    if len(packet) >= 33 and parsed['command_id'] == 219:
+                                    while len(packet) > 24:
                                         deviceID = self.home_devices[home_id][int(packet[21])]
-                                        #parse state and brightness TODO FIND OUT IF CT AND RGB
                                         device_data = {
-                                                'deviceID': deviceID,
-                                                'power_state': int(packet[27]) > 0,
-                                                'brightness': int(packet[28]) if int(packet[27]) > 0 else 0
+                                            'deviceID': deviceID,
+                                            'power_state': int(packet[8]) > 0,
+                                            'brightness': int(packet[12]) if int(packet[8]) > 0 else 0,
+                                            'color_temp_kelvin': 2000 + ((7000 - 2000) * (int(packet[16]) / 255)),
+                                            'rgb': {
+                                                'r': packet[20],
+                                                'g': packet[21],
+                                                'b': packet[22],
+                                                'active': int(packet[16]) == 254
+                                                }
                                         }
-                                        self._update_device_data(switch_id, device_data)
-                                        if deviceID in self.switch_data:
-                                                self._update_switch(
-                                                    switch_id=switch_id,
-                                                    device_id=device_data['deviceID'],
-                                                    state=device_data['power_state'],
-                                                    brightness=device_data['brightness'],
-                                                    color_temp=self.switch_data[switch_id]['devices'][deviceID].get('color_temp_kelvin'),
-                                                    rgb=self.switch_data[switch_id]['devices'][deviceID].get('rgb')
-                                                )
-        
-                                        _LOGGER.debug(f"Packet data ({len(packet)} bytes): {Packet.hexdump(packet)}")
-        
-                                elif packet_type == PACKET_TYPE_131:
-                                #Process 131 type instead of 115, basically a duplicate section
-                                    parsed['switch_id'] = struct.unpack(">I", packet[0:4])[0]
-                                    switch_id = parsed['switch_id']
-                                    home_id = self.switchID_to_homeID[switch_id]
-                                    if len(packet) >= 33 and parsed['command_id'] == 219:
-                                        deviceID = self.home_devices[home_id][int(packet[21])]
-                                    #parse state and brightness change packet
-                                        device_data = {
-                                                'deviceID': deviceID,
-                                                'power_state': int(packet[27]) > 0,
-                                                'brightness': int(packet[28]) if int(packet[27]) > 0 else 0
-                                        }
-                                        self._update_device_data(switch_id, device_data)
-                                    if deviceID in self.switch_data:
-                                        self._update_switch(
-                                            switch_id=switch_id,
-                                            device_id=device_data['deviceID'],
-                                            state=device_data['power_state'],
-                                            brightness=device_data['brightness'],
-                                            color_temp=self.switch_data[switch_id]['devices'][deviceID].get('color_temp_kelvin'),
-                                            rgb=self.switch_data[switch_id]['devices'][deviceID].get('rgb')
-                                        )
-        
-                                    _LOGGER.debug(f"Packet data ({len(packet)} bytes): {Packet.hexdump(packet)}")
-        
-                                elif packet_type == PACKET_TYPE_INITIAL and int(packet[4]) == 1 and int(packet[5]) == 1 and int(packet[6]) == 1: #67
-                                #Process initial state packet
-                                    parsed['switch_id'] = struct.unpack(">I", packet[0:4])[0]
-                                    switch_id = parsed['switch_id']
-                                    home_id = self.switchID_to_homeID[switch_id]
-                                    packet = packet[7: ]
-                                    while len(packet) >= 19:
-                                        deviceID = self.home_devices[home_id][int(packet[3])]
-                                        device_data = {
-                                                'deviceID': deviceID,
-                                                'power_state': int(packet[4]) > 0,
-                                                'brightness': int(packet[5]) if int(packet[4]) > 0 else 0,
-                                                'color_temp_kelvin': 2000 + ((7000 - 2000) * (int(packet[6]) / 255)),
-                                                'rgb': {
-                                                    'r': packet[7],
-                                                    'g': packet[8],
-                                                    'b': packet[9],
-                                                    'active': int(packet[6]) == 254
-                                                    }
-                                            }
+    
+                                        # Add or update the device in `self.switch_data[switch_id]['devices']`
                                         self._update_device_data(switch_id, device_data)
                                         if deviceID in self.switch_data:
                                             self._update_switch(
@@ -368,31 +289,112 @@ class CyncHub:
                                                 color_temp=device_data['color_temp_kelvin'],
                                                 rgb=device_data['rgb']
                                             )
+                                        packet = packet[24:]
         
-                                elif packet_type == PACKET_TYPE_DEV_ACK:
-                                    parsed['switch_id'] = struct.unpack(">I", packet[0:4])[0]
-                                    switch_id = parsed['switch_id']
-                                    home_id = self.switchID_to_homeID[switch_id]
-                                    device_data = {}
+                                #State and Brightness Packet
+                                if len(packet) >= 33 and parsed['command_id'] == 219:
+                                    deviceID = self.home_devices[home_id][int(packet[21])]
+                                    #parse state and brightness TODO FIND OUT IF CT AND RGB
+                                    device_data = {
+                                            'deviceID': deviceID,
+                                            'power_state': int(packet[27]) > 0,
+                                            'brightness': int(packet[28]) if int(packet[27]) > 0 else 0
+                                    }
                                     self._update_device_data(switch_id, device_data)
+                                    if deviceID in self.switch_data:
+                                            self._update_switch(
+                                                switch_id=switch_id,
+                                                device_id=device_data['deviceID'],
+                                                state=device_data['power_state'],
+                                                brightness=device_data['brightness'],
+                                                color_temp=self.switch_data[switch_id]['devices'][deviceID].get('color_temp_kelvin'),
+                                                rgb=self.switch_data[switch_id]['devices'][deviceID].get('rgb')
+                                            )
         
-                                elif packet_type == PACKET_TYPE_ACK:
-                                    seq = str(struct.unpack(">H", packet[9:11])[0])
-                                    command_received = self.pending_commands.get(seq,None)
-                                    if command_received is not None:
-                                        command_received(seq)
-                        except Exception as e:
-                            _LOGGER.error(f"Error while reading TCP messages: {e}")
-                            _LOGGER.debug("Traceback:", exc_info=True)
-                            await asyncio.sleep(5)  # Retry after delay
+                                    _LOGGER.debug(f"Packet data ({len(packet)} bytes): {Packet.hexdump(packet)}")
+        
+                            elif packet_type == PACKET_TYPE_131:
+                            #Process 131 type instead of 115, basically a duplicate section
+                                parsed['switch_id'] = struct.unpack(">I", packet[0:4])[0]
+                                switch_id = parsed['switch_id']
+                                home_id = self.switchID_to_homeID[switch_id]
+                                if len(packet) >= 33 and parsed['command_id'] == 219:
+                                    deviceID = self.home_devices[home_id][int(packet[21])]
+                                #parse state and brightness change packet
+                                    device_data = {
+                                            'deviceID': deviceID,
+                                            'power_state': int(packet[27]) > 0,
+                                            'brightness': int(packet[28]) if int(packet[27]) > 0 else 0
+                                    }
+                                    self._update_device_data(switch_id, device_data)
+                                if deviceID in self.switch_data:
+                                    self._update_switch(
+                                        switch_id=switch_id,
+                                        device_id=device_data['deviceID'],
+                                        state=device_data['power_state'],
+                                        brightness=device_data['brightness'],
+                                        color_temp=self.switch_data[switch_id]['devices'][deviceID].get('color_temp_kelvin'),
+                                        rgb=self.switch_data[switch_id]['devices'][deviceID].get('rgb')
+                                    )
+        
+                                _LOGGER.debug(f"Packet data ({len(packet)} bytes): {Packet.hexdump(packet)}")
+        
+                            elif packet_type == PACKET_TYPE_INITIAL and int(packet[4]) == 1 and int(packet[5]) == 1 and int(packet[6]) == 1: #67
+                            #Process initial state packet
+                                parsed['switch_id'] = struct.unpack(">I", packet[0:4])[0]
+                                switch_id = parsed['switch_id']
+                                home_id = self.switchID_to_homeID[switch_id]
+                                packet = packet[7: ]
+                                while len(packet) >= 19:
+                                    deviceID = self.home_devices[home_id][int(packet[3])]
+                                    device_data = {
+                                            'deviceID': deviceID,
+                                            'power_state': int(packet[4]) > 0,
+                                            'brightness': int(packet[5]) if int(packet[4]) > 0 else 0,
+                                            'color_temp_kelvin': 2000 + ((7000 - 2000) * (int(packet[6]) / 255)),
+                                            'rgb': {
+                                                'r': packet[7],
+                                                'g': packet[8],
+                                                'b': packet[9],
+                                                'active': int(packet[6]) == 254
+                                                }
+                                        }
+                                    self._update_device_data(switch_id, device_data)
+                                    if deviceID in self.switch_data:
+                                        self._update_switch(
+                                            switch_id=switch_id,
+                                            device_id=device_data['deviceID'],
+                                            state=device_data['power_state'],
+                                            brightness=device_data['brightness'],
+                                            color_temp=device_data['color_temp_kelvin'],
+                                            rgb=device_data['rgb']
+                                        )
+        
+                            elif packet_type == PACKET_TYPE_DEV_ACK:
+                                parsed['switch_id'] = struct.unpack(">I", packet[0:4])[0]
+                                switch_id = parsed['switch_id']
+                                home_id = self.switchID_to_homeID[switch_id]
+                                device_data = {}
+                                self._update_device_data(switch_id, device_data)
+        
+                            elif packet_type == PACKET_TYPE_ACK:
+                                seq = str(struct.unpack(">H", packet[9:11])[0])
+                                command_received = self.pending_commands.get(seq,None)
+                                if command_received is not None:
+                                    command_received(seq)
+                    except Exception as e:
+                        _LOGGER.error(f"Error while reading TCP messages: {e}")
+                        _LOGGER.debug("Traceback:", exc_info=True)
+                        await asyncio.sleep(5)  # Retry after delay
             raise ShuttingDown
         except LostConnection:
-            _LOGGER.info("Lost connection. Retrying connection in 15 seconds.")
-            await self.disconnect()
-            await asyncio.sleep(15)
-            await self.connect()
+            if not self.shutting_down:
+                _LOGGER.info("Lost connection. Retrying connection in 15 seconds.")
+                await asyncio.sleep(15)
+                self.hass.async_create_task(self.connect())
+                return
         except Exception as exc:
-            _LOGGER.error("Error in _read_tcp_messages: %s", exc, exc_info=True)
+            _LOGGER.error("Unexpected error in _read_tcp_messages: %s", exc, exc_info=True)
         finally:
             _LOGGER.debug("Exiting _read_tcp_messages loop.")
 
