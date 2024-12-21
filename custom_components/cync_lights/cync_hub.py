@@ -141,8 +141,6 @@ class CyncHub:
 
         self.effect_mapping = self.parse_light_shows(data['cync_config'])  # Re-added light show parsing
 
-        self.hass.async_create_task(self.connect())
-
 
     async def setup_ssl_context(self) -> None:
         """Set up SSL context asynchronously."""
