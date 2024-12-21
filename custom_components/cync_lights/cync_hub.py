@@ -534,11 +534,10 @@ class CyncHub:
             await self.writer.drain()
         raise ShuttingDown
 
-    def _send_request(self, request):
-        async def send():
-            self.writer.write(request)
-            await self.writer.drain()
-        self.hass.async_create_task(send())
+    async def _send_request(self, request):
+        """Actually send the data to the server in a coroutine."""
+        self.writer.write(request)
+        await self.writer.drain()
 
     async def _update_connected_devices(self):
         while not self.shutting_down:
