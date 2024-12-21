@@ -171,7 +171,7 @@ class CyncHub:
             for controller in home_controllers:
                 seq = await self.get_seq_num()
                 state_request = bytes.fromhex('7300000018') + int(controller).to_bytes(4,'big') + seq.to_bytes(2,'big') + bytes.fromhex('007e00000000f85206000000ffff0000567e')
-                self.hass.async_create_task(self._send_request(state_request))
+                self.hass.async_create_task(self._send_request,state_request)
 
     async def connect(self):
         """
@@ -291,7 +291,7 @@ class CyncHub:
                                 #Response ID 4-5
                                 response_id = struct.unpack(">H", packet[4:6])[0]
                                 response_packet = bytes.fromhex('7300000007') + int(switch_id).to_bytes(4,'big') + response_id.to_bytes(2,'big') + bytes.fromhex('00')
-                                self.hass.async_create_task(self._send_request(response_packet))
+                                self.hass.async_create_task(self._send_request, response_packet)
 
                                 #Command ID
                                 parsed['command_id'] = int(packet[13])
@@ -553,7 +553,7 @@ class CyncHub:
                     for controller in home_controllers:
                         seq = await self.get_seq_num()
                         ping = bytes.fromhex('a300000007') + int(controller).to_bytes(4,'big') + seq.to_bytes(2,'big') + bytes.fromhex('00')
-                        self.hass.async_create_task(self._send_request(ping))
+                        self.hass.async_create_task(self._send_request, ping)
                         await asyncio.sleep(0.15)
                 await asyncio.sleep(2)
                 attempts += 1
@@ -575,25 +575,25 @@ class CyncHub:
                 controller = int(self.cync_switches[connected_devices[0]].switch_id)
                 seq = await self.get_seq_num()
                 state_request = bytes.fromhex('7300000018') + int(controller).to_bytes(4,'big') + seq.to_bytes(2,'big') + bytes.fromhex('007e00000000f85206000000ffff0000567e')
-                self.hass.async_create_task(self._send_request(state_request))
+                self.hass.async_create_task(self._send_request, state_request)
         for dev in self.cync_switches.values():
             dev.publish_update()
 
     def combo_control(self,state,brightness,color_tone,rgb,switch_id,mesh_id,seq):
         combo_request = bytes.fromhex('7300000022') + int(switch_id).to_bytes(4,'big') + int(seq).to_bytes(2,'big') + bytes.fromhex('007e00000000f8f010000000000000') + mesh_id + bytes.fromhex('f00000') + (1 if state else 0).to_bytes(1,'big')  + brightness.to_bytes(1,'big') + color_tone.to_bytes(1,'big') + rgb[0].to_bytes(1,'big') + rgb[1].to_bytes(1,'big') + rgb[2].to_bytes(1,'big') + ((496 + int(mesh_id[0]) + int(mesh_id[1]) + (1 if state else 0) + brightness + color_tone + sum(rgb))%256).to_bytes(1,'big') + bytes.fromhex('7e')
-        self.hass.async_create_task(self._send_request(combo_request))
+        self.hass.async_create_task(self._send_request,combo_request)
 
     def turn_on(self,switch_id,mesh_id,seq):
         power_request = bytes.fromhex('730000001f') + int(switch_id).to_bytes(4,'big') + int(seq).to_bytes(2,'big') + bytes.fromhex('007e00000000f8d00d000000000000') + mesh_id + bytes.fromhex('d00000010000') + ((430 + int(mesh_id[0]) + int(mesh_id[1]))%256).to_bytes(1,'big') + bytes.fromhex('7e')
-        self.hass.async_create_task(self._send_request(power_request))
+        self.hass.async_create_task(self._send_request,power_request)
 
     def turn_off(self,switch_id,mesh_id,seq):
         power_request = bytes.fromhex('730000001f') + int(switch_id).to_bytes(4,'big') + int(seq).to_bytes(2,'big') + bytes.fromhex('007e00000000f8d00d000000000000') + mesh_id + bytes.fromhex('d00000000000') + ((429 + int(mesh_id[0]) + int(mesh_id[1]))%256).to_bytes(1,'big') + bytes.fromhex('7e')
-        self.hass.async_create_task(self._send_request(power_request))
+        self.hass.async_create_task(self._send_request,power_request)
 
     def set_color_temp(self,color_temp,switch_id,mesh_id,seq):
         color_temp_request = bytes.fromhex('730000001e') + int(switch_id).to_bytes(4,'big') + int(seq).to_bytes(2,'big') + bytes.fromhex('007e00000000f8e20c000000000000') + mesh_id + bytes.fromhex('e2000005') + color_temp.to_bytes(1,'big') + ((469 + int(mesh_id[0]) + int(mesh_id[1]) + color_temp)%256).to_bytes(1,'big') + bytes.fromhex('7e')
-        self.hass.async_create_task(self._send_request(color_temp_request))
+        self.hass.async_create_task(self._send_request,color_temp_request)
 
 
 class CyncSwitch:
