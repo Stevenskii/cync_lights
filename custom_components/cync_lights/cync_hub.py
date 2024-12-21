@@ -836,3 +836,12 @@ class CyncUserData:
             async with session.get(API_DEVICE_INFO.format(product_id=product_id, device_id=device_id), headers=headers) as resp:
                 response = await resp.json()
                 return response
+
+class LostConnection(Exception):
+    """Lost connection to Cync Server"""
+
+class ShuttingDown(Exception):
+    """Cync client shutting down"""
+
+class InvalidCyncConfiguration(Exception):
+    """Cync configuration is not supported"""
