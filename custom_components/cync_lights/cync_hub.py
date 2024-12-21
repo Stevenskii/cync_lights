@@ -188,7 +188,7 @@ class CyncHub:
                 # Attempt to establish a secure connection
                 try:
                     _LOGGER.debug("Trying to establish SSL connection on port 23779.")
-                    self.reader, self.writer = await asyncio.open_connection(self.host, self.ssl_port, ssl=self.ssl_context)
+                    self.reader, self.writer = await asyncio.open_connection(self.host, SSL_PORT, ssl=self.ssl_context)
                 except Exception as e:
                     _LOGGER.debug(f"SSL connection failed: {e}. Retrying with SSL context check disabled.")
                     if self.ssl_context:
@@ -199,33 +199,10 @@ class CyncHub:
                     except Exception as e:
                         _LOGGER.debug(f"Retrying without SSL context: {e}. Falling back to unsecured connection.")
                         self.reader, self.writer = await asyncio.open_connection(self.host, DEFAULT_PORT)
-
-                _LOGGER.debug("TCP connection established.")
-
-                # Send login code
-                self.writer.write(self.login_code)
-                await self.writer.drain()
-                _LOGGER.debug(f"Sent login code: {self.login_code.hex()}")
-
-                # Await login response
-                login_response = await self.reader.read(1000)
-                _LOGGER.debug(f"Login response: {login_response.hex()}")
-
-                if not login_response:
-                    _LOGGER.error("Authentication failed: no response from server")
-                    raise Exception("Authentication failed: no response from server")
-
-                # Process login response
-                if login_response.startswith(b'\x18\x00\x00\x00\x02\x00\x00'):
-                    self.logged_in = True
-                    _LOGGER.debug("Successfully authenticated with the server.")
-                else:
-                    _LOGGER.error(f"Authentication failed with response data: {login_response.hex()}")
-                    raise Exception("Authentication failed with response data.")
-                # Reset backoff and retry attempts after successful connection
-                backoff = 1
-                retry_attempts = 0
-
+            except Exception as e:
+                _LOGGER.error(str(type(e).__name__) + ": " + str(e))
+                await asyncio.sleep(5)
+            else:
                 # Create tasks for handling TCP messages and keep-alive
                 read_tcp_messages = asyncio.create_task(self._read_tcp_messages(), name="Read TCP Messages")
                 maintain_connection = asyncio.create_task(self._maintain_connection(), name="Maintain Connection")
@@ -262,6 +239,26 @@ class CyncHub:
 
     async def _read_tcp_messages(self) -> None:
         """Continuously read and process TCP messages from the server."""
+        # Send login code
+        self.writer.write(self.login_code)
+        await self.writer.drain()
+        _LOGGER.debug(f"Sent login code: {self.login_code.hex()}")
+
+        # Await login response
+        login_response = await self.reader.read(1000)
+        _LOGGER.debug(f"Login response: {login_response.hex()}")
+
+        if not login_response:
+            _LOGGER.error("Authentication failed: no response from server")
+            raise Exception("Authentication failed: no response from server")
+
+        # Process login response
+        if login_response.startswith(b'\x18\x00\x00\x00\x02\x00\x00'):
+            self.logged_in = True
+            _LOGGER.debug("Successfully authenticated with the server.")
+        else:
+            _LOGGER.error(f"Authentication failed with response data: {login_response.hex()}")
+            raise Exception("Authentication failed with response data.")
         while not self.shutting_down:
                 data = await self.reader.read(1000)
                 if len(data) == 0:
